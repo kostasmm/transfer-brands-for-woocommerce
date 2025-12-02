@@ -617,14 +617,51 @@ class TBFW_Transfer_Brands_Admin {
         $source_count = $this->core->get_utils()->count_source_terms();
         $destination_count = $this->core->get_utils()->count_destination_terms();
         $products_with_source = $this->core->get_utils()->count_products_with_source();
-        
+
         // Get backup information
         $transfer_backup = get_option('tbfw_transfer_brands_backup', false);
         $deleted_backup = get_option('tbfw_deleted_brands_backup', false);
-        
+
         // Count products in deletion backup (for more accurate information)
         $deleted_products_count = $deleted_backup ? count($deleted_backup) : 0;
+
+        // Check WooCommerce Brands status
+        $brands_status = $this->core->get_utils()->check_woocommerce_brands_status();
+        $can_transfer = $brands_status['enabled'];
         ?>
+
+        <?php if (!$can_transfer): ?>
+        <div class="notice notice-error">
+            <p><strong><?php esc_html_e('WooCommerce Brands Not Ready', 'transfer-brands-for-woocommerce'); ?></strong></p>
+            <p><?php echo esc_html($brands_status['message']); ?></p>
+            <?php if (!empty($brands_status['instructions'])): ?>
+            <p><?php echo wp_kses_post($brands_status['instructions']); ?></p>
+            <?php endif; ?>
+            <?php if (!empty($brands_status['details'])): ?>
+            <details style="margin-top: 10px;">
+                <summary style="cursor: pointer; font-weight: 600;"><?php esc_html_e('Technical Details', 'transfer-brands-for-woocommerce'); ?></summary>
+                <ul style="margin: 10px 0 0 20px; list-style-type: disc;">
+                    <?php foreach ($brands_status['details'] as $detail): ?>
+                    <li><?php echo esc_html($detail); ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            </details>
+            <?php endif; ?>
+        </div>
+        <?php elseif (!empty($brands_status['details']) && strpos(implode(' ', $brands_status['details']), 'Could not verify') !== false): ?>
+        <div class="notice notice-warning">
+            <p><strong><?php esc_html_e('Note', 'transfer-brands-for-woocommerce'); ?>:</strong> <?php echo esc_html($brands_status['message']); ?></p>
+            <details>
+                <summary style="cursor: pointer;"><?php esc_html_e('Details', 'transfer-brands-for-woocommerce'); ?></summary>
+                <ul style="margin: 10px 0 0 20px; list-style-type: disc;">
+                    <?php foreach ($brands_status['details'] as $detail): ?>
+                    <li><?php echo esc_html($detail); ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            </details>
+        </div>
+        <?php endif; ?>
+
         <div class="notice notice-info">
             <p><?php printf(
                 /* translators: %1$s: Source taxonomy name, %2$s: Destination taxonomy name */
@@ -752,10 +789,17 @@ class TBFW_Transfer_Brands_Admin {
                 
                 <div class="action-container">
                     <button id="tbfw-tb-start" class="button button-primary action-button"
-                            data-tooltip="<?php esc_attr_e('Begin transferring brands from attribute to taxonomy', 'transfer-brands-for-woocommerce'); ?>">
+                            data-tooltip="<?php echo $can_transfer ? esc_attr__('Begin transferring brands from attribute to taxonomy', 'transfer-brands-for-woocommerce') : esc_attr__('WooCommerce Brands must be enabled first', 'transfer-brands-for-woocommerce'); ?>"
+                            <?php echo !$can_transfer ? 'disabled' : ''; ?>>
                         <?php esc_html_e('Start Transfer', 'transfer-brands-for-woocommerce'); ?>
                     </button>
-                    <span class="action-description"><?php esc_html_e('Transfer brands to taxonomy', 'transfer-brands-for-woocommerce'); ?></span>
+                    <span class="action-description">
+                        <?php if ($can_transfer): ?>
+                            <?php esc_html_e('Transfer brands to taxonomy', 'transfer-brands-for-woocommerce'); ?>
+                        <?php else: ?>
+                            <span style="color: #d63638;"><?php esc_html_e('Enable WooCommerce Brands first', 'transfer-brands-for-woocommerce'); ?></span>
+                        <?php endif; ?>
+                    </span>
                 </div>
                 
                 <?php if ($products_with_source > 0): ?>

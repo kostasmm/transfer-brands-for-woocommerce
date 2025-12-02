@@ -46,14 +46,31 @@ class TBFW_Transfer_Brands_Ajax {
      */
     public function ajax_transfer() {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
-        
+
         if (!current_user_can('manage_woocommerce')) {
             wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
-        
+
         $step = isset($_POST['step']) ? sanitize_text_field($_POST['step']) : 'backup';
         $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
-        
+
+        // Pre-transfer validation: Check if WooCommerce Brands is enabled
+        if ($step === 'backup' && $offset === 0) {
+            $brands_status = $this->core->get_utils()->check_woocommerce_brands_status();
+            if (!$brands_status['enabled']) {
+                $error_message = $brands_status['message'];
+                if (!empty($brands_status['instructions'])) {
+                    $error_message .= ' ' . wp_strip_all_tags($brands_status['instructions']);
+                }
+                wp_send_json_error([
+                    'message' => $error_message,
+                    'brands_not_enabled' => true,
+                    'details' => $brands_status['details']
+                ]);
+                return;
+            }
+        }
+
         // Step 0: Create backup of the current terms and assignments
         if ($step === 'backup') {
             if ($offset === 0) {
@@ -246,14 +263,43 @@ class TBFW_Transfer_Brands_Ajax {
             'custom_samples' => count($custom_samples)
         ]);
         
+        // Check WooCommerce Brands status
+        $brands_status = $this->core->get_utils()->check_woocommerce_brands_status();
+
         // Build HTML response
         $html = '<div class="analysis-results">';
-        
-        $html .= '<h4>Summary</h4>';
+
+        // WooCommerce Brands Status Section
+        $html .= '<h4>' . esc_html__('WooCommerce Brands Status', 'transfer-brands-for-woocommerce') . '</h4>';
+        if ($brands_status['enabled']) {
+            $html .= '<div class="notice notice-success inline" style="margin: 0 0 15px 0; padding: 10px 12px;">';
+            $html .= '<p style="margin: 0;"><span class="dashicons dashicons-yes-alt" style="color: #00a32a;"></span> <strong>' . esc_html($brands_status['message']) . '</strong></p>';
+            $html .= '</div>';
+        } else {
+            $html .= '<div class="notice notice-error inline" style="margin: 0 0 15px 0; padding: 10px 12px;">';
+            $html .= '<p style="margin: 0 0 5px 0;"><span class="dashicons dashicons-warning" style="color: #d63638;"></span> <strong>' . esc_html($brands_status['message']) . '</strong></p>';
+            if (!empty($brands_status['instructions'])) {
+                $html .= '<p style="margin: 0;">' . wp_kses_post($brands_status['instructions']) . '</p>';
+            }
+            $html .= '</div>';
+        }
+
+        if (!empty($brands_status['details'])) {
+            $html .= '<details style="margin-bottom: 15px;">';
+            $html .= '<summary style="cursor: pointer; font-weight: 600;">' . esc_html__('Technical Details', 'transfer-brands-for-woocommerce') . '</summary>';
+            $html .= '<ul style="margin: 10px 0 0 20px; list-style-type: disc;">';
+            foreach ($brands_status['details'] as $detail) {
+                $html .= '<li>' . esc_html($detail) . '</li>';
+            }
+            $html .= '</ul>';
+            $html .= '</details>';
+        }
+
+        $html .= '<h4>' . esc_html__('Source Brands Summary', 'transfer-brands-for-woocommerce') . '</h4>';
         $html .= '<ul>';
-        $html .= '<li><strong>' . count($source_terms) . '</strong> brands found in taxonomy ' . esc_html($this->core->get_option('source_taxonomy')) . '</li>';
-        $html .= '<li><strong>' . $custom_attribute_count . '</strong> products have custom (non-taxonomy) attributes with name ' . esc_html($this->core->get_option('source_taxonomy')) . '</li>';
-        $html .= '<li><strong>' . $terms_with_images . '</strong> brands have images that will be transferred</li>';
+        $html .= '<li><strong>' . count($source_terms) . '</strong> ' . esc_html__('brands found in taxonomy', 'transfer-brands-for-woocommerce') . ' ' . esc_html($this->core->get_option('source_taxonomy')) . '</li>';
+        $html .= '<li><strong>' . $custom_attribute_count . '</strong> ' . esc_html__('products have custom (non-taxonomy) attributes with name', 'transfer-brands-for-woocommerce') . ' ' . esc_html($this->core->get_option('source_taxonomy')) . '</li>';
+        $html .= '<li><strong>' . $terms_with_images . '</strong> ' . esc_html__('brands have images that will be transferred', 'transfer-brands-for-woocommerce') . '</li>';
         $html .= '</ul>';
         
         // Warning about custom attributes

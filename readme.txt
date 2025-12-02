@@ -3,7 +3,7 @@ Contributors: malakontask
 Tags: woocommerce, brands, migration, taxonomy, transfer
 Requires at least: 6.0
 Tested up to: 6.8.2
-Stable tag: 2.8.2
+Stable tag: 2.8.4
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -118,6 +118,22 @@ Enable debug mode in the plugin settings to access detailed logs, which can help
 
 == Changelog ==
 
+= 2.8.4 =
+* Added: Pre-transfer validation to check if WooCommerce Brands feature is enabled
+* Added: Clear error message and instructions when WooCommerce Brands is not enabled
+* Added: WooCommerce Brands status check in the "Analyze Brands" tool
+* Added: Disabled "Start Transfer" button when WooCommerce Brands is not properly configured
+* Fixed: Issue where transfers appeared successful but brands didn't show in WooCommerce admin
+* Improved: Better detection of WooCommerce Brands feature status using multiple indicators
+* Improved: More detailed technical information for troubleshooting
+
+= 2.8.3 =
+* Fixed: Brands not appearing in WooCommerce after transfer
+* Fixed: 404 errors on brand pages by flushing rewrite rules after transfer
+* Improved: Better WooCommerce 9.6+ brand taxonomy detection
+* Added: Taxonomy cache clearing after transfer completion
+* Added: Validation warnings if destination taxonomy doesn't exist
+
 = 2.8.2 =
 * Fixed WordPress.org plugin guidelines compliance
 * Reduced tags to 5 as per WordPress.org requirements
@@ -218,6 +234,12 @@ Enable debug mode in the plugin settings to access detailed logs, which can help
 * Initial release
 
 == Upgrade Notice ==
+
+= 2.8.4 =
+**Important**: This update prevents a common issue where brands appear to transfer successfully but don't show in WooCommerce admin. The plugin now validates that WooCommerce Brands is properly enabled before allowing transfers, with clear instructions on how to enable it.
+
+= 2.8.3 =
+Important fix for users experiencing brands not appearing after transfer or 404 errors on brand pages. This update flushes rewrite rules automatically and improves WooCommerce 9.6+ compatibility.
 
 = 2.8.2 =
 Minor update to comply with WordPress.org plugin guidelines. No functional changes.

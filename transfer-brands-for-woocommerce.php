@@ -3,7 +3,7 @@
  * Plugin Name: Transfer Brands for WooCommerce
  * Plugin URI: https://pluginatlas.com/transfer-brands-for-woocommerce
  * Description: Official migration tool for WooCommerce 9.6 Brands. Safely transfer your product brand attributes to the new brand taxonomy with image support, batch processing, and full backup capabilities.
- * Version: 2.8.2
+ * Version: 2.8.4
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
@@ -35,7 +35,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('TBFW_VERSION', '2.8.2');
+define('TBFW_VERSION', '2.8.4');
 define('TBFW_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('TBFW_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('TBFW_INCLUDES_DIR', TBFW_PLUGIN_DIR . 'includes/');
