@@ -1,0 +1,333 @@
+/**
+ * Admin CSS styles for Transfer Brands for WooCommerce
+ */
+
+/* Progress bar styling */
+#tbfw-tb-progress-bar {
+    height: 24px;
+    width: 100%;
+    border-radius: 3px;
+    background-color: #f0f0f1;
+}
+
+#tbfw-tb-progress-bar::-webkit-progress-bar {
+    background-color: #f0f0f1;
+    border-radius: 3px;
+}
+
+#tbfw-tb-progress-bar::-webkit-progress-value {
+    background-color: #2271b1;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+#tbfw-tb-progress-bar::-moz-progress-bar {
+    background-color: #2271b1;
+    border-radius: 3px;
+}
+
+/* Log area */
+#tbfw-tb-log {
+    font-family: monospace;
+    background-color: #f8f9fa;
+    border: 1px solid #ddd;
+    padding: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-size: 12px;
+    border-radius: 3px;
+    margin-top: 15px;
+}
+
+/* Analysis results */
+.analysis-results h4 {
+    margin-top: 20px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 5px;
+}
+
+.analysis-results table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 20px;
+}
+
+.analysis-results table th,
+.analysis-results table td {
+    padding: 8px;
+    text-align: left;
+    border: 1px solid #ddd;
+}
+
+.analysis-results table th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+}
+
+/* Notice styling */
+.notice.inline {
+    margin: 10px 0;
+    padding: 10px 15px;
+}
+
+/* Action buttons and containers */
+.actions {
+    margin: 20px 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.action-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 15px;
+    min-width: 140px;
+}
+
+.action-button {
+    width: 100%;
+    text-align: center;
+    margin-bottom: 5px !important;
+    height: 36px !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+}
+
+.action-description {
+    font-size: 12px;
+    color: #666;
+    text-align: center;
+}
+
+.button-warning {
+    background: #d63638 !important;
+    border-color: #d63638 !important;
+    color: white !important;
+}
+
+.button-warning:hover {
+    background: #b32d2e !important;
+    border-color: #b32d2e !important;
+}
+
+/* Stats display */
+#tbfw-tb-progress-stats {
+    margin-bottom: 10px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+#tbfw-tb-timer {
+    color: #666;
+    font-size: 13px;
+    margin-bottom: 10px;
+}
+
+/* Warning message */
+#tbfw-tb-progress-warning {
+    color: #d63638;
+    background: #f8d7da;
+    border-left: 4px solid #d63638;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 3px;
+}
+
+/* Detail view toggles */
+#tbfw-tb-show-count-details {
+    text-decoration: none;
+    color: #2271b1;
+}
+
+#tbfw-tb-show-count-details:hover {
+    color: #135e96;
+}
+
+/* Tooltip styles */
+.ui-tooltip {
+    padding: 8px;
+    position: absolute;
+    z-index: 9999;
+    max-width: 300px;
+    background: #333;
+    color: white;
+    border-radius: 4px;
+    font-size: 12px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+/* Settings container */
+.tbfw-tb-settings-container {
+    max-width: 800px;
+    background: #fff;
+    padding: 20px;
+    border-radius: 3px;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+    margin-top: 20px;
+}
+
+/* Modal styles */
+.tbfw-tb-modal {
+    display: none;
+    position: fixed;
+    z-index: 999;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.4);
+}
+
+.tbfw-tb-modal-content {
+    position: relative;
+    background-color: #fefefe;
+    margin: 10% auto;
+    padding: 0;
+    border: 1px solid #888;
+    width: 500px;
+    max-width: 90%;
+    box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2);
+    animation-name: tbfw-tb-modal-appear;
+    animation-duration: 0.3s;
+    border-radius: 4px;
+}
+
+@keyframes tbfw-tb-modal-appear {
+    from {
+        opacity: 0;
+        transform: translateY(-30px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.tbfw-tb-modal-header {
+    padding: 15px;
+    background-color: #f8f8f8;
+    border-bottom: 1px solid #ddd;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
+.tbfw-tb-modal-header h2 {
+    margin: 0;
+    padding: 0;
+    font-size: 1.4em;
+}
+
+.tbfw-tb-modal-body {
+    padding: 20px;
+}
+
+.tbfw-tb-modal-close {
+    color: #aaa;
+    float: right;
+    font-size: 24px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: -5px;
+}
+
+.tbfw-tb-modal-close:hover,
+.tbfw-tb-modal-close:focus {
+    color: black;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.tbfw-tb-modal-buttons {
+    margin-top: 20px;
+    text-align: right;
+}
+
+.tbfw-tb-confirm-input {
+    width: 100%;
+    padding: 10px;
+    margin-top: 10px;
+    font-size: 16px;
+    text-align: center;
+    border: 2px solid #ddd;
+    border-radius: 4px;
+}
+
+.tbfw-tb-warning-text {
+    color: #d63638;
+    font-weight: bold;
+    font-size: 14px;
+    padding: 10px;
+    background-color: #f8d7da;
+    border-radius: 4px;
+    border-left: 4px solid #d63638;
+}
+
+/* Media queries for responsive design */
+@media screen and (max-width: 782px) {
+    .action-container {
+        min-width: 120px;
+    }
+
+    #tbfw-tb-log {
+        max-height: 200px;
+    }
+
+    .analysis-results table {
+        font-size: 13px;
+    }
+
+    .tbfw-tb-modal-content {
+        width: 95%;
+        margin: 15% auto;
+    }
+}
+
+/* Permalink Info styles */
+.tbfw-tb-permalink-info {
+    margin-bottom: 10px;
+}
+
+.tbfw-tb-permalink-info strong {
+    font-size: 14px;
+    background-color: #f0f0f1;
+    padding: 5px 10px;
+    border-radius: 3px;
+    display: inline-block;
+    margin-bottom: 5px;
+}
+
+.tbfw-tb-permalink-refresh {
+    margin-top: 10px;
+}
+
+#tbfw-tb-refresh-taxonomy-status {
+    font-style: italic;
+    transition: opacity 0.3s ease;
+}
+
+/* Taxonomy badge styles */
+.tbfw-tb-taxonomy-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    margin-left: 8px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 13px;
+    font-weight: bold;
+    color: #fff;
+}
+
+.tbfw-tb-taxonomy-badge.source {
+    background-color: #2271b1;
+}
+
+.tbfw-tb-taxonomy-badge.destination {
+    background-color: #46b450;
+}

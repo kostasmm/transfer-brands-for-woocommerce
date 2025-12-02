@@ -1,0 +1,533 @@
+# Copyright (C) 2025 Kostas Malakontas
+# This file is distributed under the GPL v2 or later.
+msgid ""
+msgstr ""
+"Project-Id-Version: Transfer Brands for WooCommerce 2.8.0\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/transfer-brands-for-woocommerce\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2025-05-08T12:00:00+00:00\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"X-Generator: WP-CLI 2.8.0\n"
+"X-Domain: transfer-brands-for-woocommerce\n"
+
+#. Plugin Name of the plugin
+msgid "Transfer Brands for WooCommerce"
+msgstr ""
+
+#. Plugin URI of the plugin
+msgid "https://pluginatlas.com/transfer-brands-for-woocommerce"
+msgstr ""
+
+#. Description of the plugin
+msgid "Transfers product brand attributes to the product_brand taxonomy with images, showing progress in the admin UI. Includes backup, rollback and safety features."
+msgstr ""
+
+#. Author of the plugin
+msgid "Kostas Malakontas"
+msgstr ""
+
+#. Author URI of the plugin
+msgid "https://pluginatlas.com"
+msgstr ""
+
+#: tbfw-transfer-brands.php:67
+msgid "Transfer Brands for WooCommerce requires WooCommerce to be installed and activated."
+msgstr ""
+
+#: includes/class-core.php:226
+msgid "Product Brands"
+msgstr ""
+
+#: includes/class-core.php:243
+#, php-format
+msgid "Created missing \"%s\" taxonomy. You can now proceed with brand transfer."
+msgstr ""
+
+#: includes/class-admin.php:68
+msgid "Are you sure you want to transfer brands? This process cannot be easily undone unless you have backups enabled."
+msgstr ""
+
+#: includes/class-admin.php:69
+msgid "This action will remove the old brand attribute from all products. Are you sure?"
+msgstr ""
+
+#: includes/class-admin.php:70
+msgid "Please type YES in the box below to confirm deletion of all old brand attributes. This action cannot be undone unless you have backups enabled."
+msgstr ""
+
+#: includes/class-admin.php:71
+msgid "Type YES to confirm"
+msgstr ""
+
+#: includes/class-admin.php:72
+msgid "Verification failed. Please type YES to confirm deletion."
+msgstr ""
+
+#: includes/class-admin.php:73
+msgid "Are you sure you want to rollback the transfer? This will restore the previous state before the transfer."
+msgstr ""
+
+#: includes/class-admin.php:74
+msgid "This action will restore the deleted brand attributes to products. Are you sure?"
+msgstr ""
+
+#: includes/class-admin.php:75
+msgid "This action will delete ALL stored backups. After this, rollback will not be possible. Are you sure?"
+msgstr ""
+
+#: includes/class-admin.php:76
+msgid "Processing products:"
+msgstr ""
+
+#: includes/class-admin.php:77
+msgid "Progress:"
+msgstr ""
+
+#: includes/class-admin.php:78
+msgid "Completed!"
+msgstr ""
+
+#: includes/class-admin.php:79
+msgid "Error:"
+msgstr ""
+
+#: includes/class-admin.php:80
+msgid "AJAX Error:"
+msgstr ""
+
+#: includes/class-admin.php:81
+msgid "Time elapsed:"
+msgstr ""
+
+#: includes/class-admin.php:82
+msgid "Estimated time remaining:"
+msgstr ""
+
+#: includes/class-admin.php:83
+msgid "minutes"
+msgstr ""
+
+#: includes/class-admin.php:84
+msgid "seconds"
+msgstr ""
+
+#: includes/class-admin.php:85
+msgid "The page will automatically refresh in 3 seconds..."
+msgstr ""
+
+#: includes/class-admin.php:86
+msgid "WARNING: Do not refresh the page until the process is complete!"
+msgstr ""
+
+#: includes/class-admin.php:92
+msgid "Refreshing..."
+msgstr ""
+
+#: includes/class-admin.php:93
+msgid "Refresh Destination Taxonomy"
+msgstr ""
+
+#: includes/class-admin.php:94
+msgid "Updated!"
+msgstr ""
+
+#: includes/class-admin.php:96
+msgid "Network error occurred"
+msgstr ""
+
+#: includes/class-admin.php:115
+msgid "Transfer Brands"
+msgstr ""
+
+#: includes/class-admin.php:124
+msgid "Brand Transfer Debug"
+msgstr ""
+
+#: includes/class-admin.php:154
+msgid "Main Settings"
+msgstr ""
+
+#: includes/class-admin.php:161
+msgid "Source Attribute Taxonomy"
+msgstr ""
+
+#: includes/class-admin.php:169
+msgid "Destination Brand Taxonomy"
+msgstr ""
+
+#: includes/class-admin.php:177
+msgid "Batch Size"
+msgstr ""
+
+#: includes/class-admin.php:185
+msgid "Create Backup"
+msgstr ""
+
+#: includes/class-admin.php:193
+msgid "Debug Mode"
+msgstr ""
+
+#: includes/class-admin.php:217
+msgid "This value is automatically pulled from WordPress permalinks settings. To change it, go to %s and modify the \"Product brand base\" field."
+msgstr ""
+
+#: includes/class-admin.php:219
+msgid "Settings > Permalinks"
+msgstr ""
+
+#: includes/class-admin.php:234
+msgid "Configure the brand transfer settings. These settings determine how brands are transferred from attribute to taxonomy."
+msgstr ""
+
+#: includes/class-admin.php:254
+msgid "Select the source attribute that contains your brands."
+msgstr ""
+
+#: includes/class-admin.php:266
+msgid "Number of products to process per batch. Higher values may be faster but could time out."
+msgstr ""
+
+#: includes/class-admin.php:276
+msgid "Enable backups (recommended)"
+msgstr ""
+
+#: includes/class-admin.php:277
+msgid "This feature creates a backup before transferring brands. This allows you to undo the transfer if any issues occur."
+msgstr ""
+
+#: includes/class-admin.php:280
+msgid "What the backup does:"
+msgstr ""
+
+#: includes/class-admin.php:282
+msgid "Stores all existing brands in the destination and their metadata (images, etc.)"
+msgstr ""
+
+#: includes/class-admin.php:283
+msgid "For each modified product, stores the original brand assignments"
+msgstr ""
+
+#: includes/class-admin.php:284
+msgid "Maintains a mapping between old and new terms"
+msgstr ""
+
+#: includes/class-admin.php:285
+msgid "Allows full restoration in case of error via the \"Rollback Transfer\" button"
+msgstr ""
+
+#: includes/class-admin.php:297
+msgid "Enable debugging mode"
+msgstr ""
+
+#: includes/class-admin.php:298
+msgid "When enabled, the plugin will collect detailed logs about the brand transfer process. Use this if you encounter issues."
+msgstr ""
+
+#: includes/class-admin.php:318
+msgid "Save Settings"
+msgstr ""
+
+#: includes/class-ajax.php:485
+msgid "Destination taxonomy updated to: %s"
+msgstr ""
+
+#: includes/class-ajax.php:488
+msgid "Failed to update destination taxonomy"
+msgstr ""
+
+#: includes/class-admin.php:364
+msgid "Brand Transfer Debug Information"
+msgstr ""
+
+#: includes/class-admin.php:367
+msgid "Configuration"
+msgstr ""
+
+#: includes/class-admin.php:370
+msgid "Source Taxonomy:"
+msgstr ""
+
+#: includes/class-admin.php:374
+msgid "Destination Taxonomy:"
+msgstr ""
+
+#: includes/class-admin.php:378
+msgid "Batch Size:"
+msgstr ""
+
+#: includes/class-admin.php:382
+msgid "Backup Enabled:"
+msgstr ""
+
+#: includes/class-admin.php:383
+msgid "Yes"
+msgstr ""
+
+#: includes/class-admin.php:383
+msgid "No"
+msgstr ""
+
+#: includes/class-admin.php:391
+msgid "Sample Products with Brand Attribute"
+msgstr ""
+
+#: includes/class-admin.php:392
+#, php-format
+msgid "These are products that have the %s attribute:"
+msgstr ""
+
+#: includes/class-admin.php:397
+msgid "ID"
+msgstr ""
+
+#: includes/class-admin.php:398
+msgid "Product"
+msgstr ""
+
+#: includes/class-admin.php:399
+msgid "Attribute Type"
+msgstr ""
+
+#: includes/class-admin.php:400
+msgid "Value"
+msgstr ""
+
+#: includes/class-admin.php:401
+msgid "Details"
+msgstr ""
+
+#: includes/class-admin.php:409
+msgid "Taxonomy"
+msgstr ""
+
+#: includes/class-admin.php:411
+msgid "Custom"
+msgstr ""
+
+#: includes/class-admin.php:425
+msgid "Show Details"
+msgstr ""
+
+#: includes/class-admin.php:436
+msgid "No products found with this attribute."
+msgstr ""
+
+#: includes/class-admin.php:441
+msgid "Debug Log"
+msgstr ""
+
+#: includes/class-admin.php:442
+msgid "This log shows detailed information about the brand transfer process:"
+msgstr ""
+
+#: includes/class-admin.php:445
+msgid "No debug log entries found. Enable debug mode and perform operations to generate log entries."
+msgstr ""
+
+#: includes/class-admin.php:451
+msgid "Show Data"
+msgstr ""
+
+#: includes/class-admin.php:461
+msgid "Clear Debug Log"
+msgstr ""
+
+#: includes/class-admin.php:470
+msgid "Are you sure you want to clear the debug log?"
+msgstr ""
+
+#: includes/class-admin.php:488
+msgid "Transfer Brands for WooCommerce"
+msgstr ""
+
+#: includes/class-admin.php:498
+#, php-format
+msgid "This tool will transfer product brands from %1$s attribute to %2$s taxonomy."
+msgstr ""
+
+#: includes/class-admin.php:502
+msgid "You can change these settings in the Settings tab."
+msgstr ""
+
+#: includes/class-admin.php:508
+msgid "Current Status"
+msgstr ""
+
+#: includes/class-admin.php:542
+msgid "Source terms:"
+msgstr ""
+
+#: includes/class-admin.php:544
+msgid "brands"
+msgstr ""
+
+#: includes/class-admin.php:550
+msgid "Destination terms:"
+msgstr ""
+
+#: includes/class-admin.php:552
+msgid "brands"
+msgstr ""
+
+#: includes/class-admin.php:557
+msgid "Products with source brand:"
+msgstr ""
+
+#: includes/class-admin.php:558
+msgid "Show details"
+msgstr ""
+
+#: includes/class-admin.php:560
+msgid "products"
+msgstr ""
+
+#: includes/class-admin.php:567
+msgid "Count details:"
+msgstr ""
+
+#: includes/class-admin.php:569
+msgid "Products with custom (non-taxonomy) brand:"
+msgstr ""
+
+#: includes/class-admin.php:570
+msgid "Products with taxonomy brand:"
+msgstr ""
+
+#: includes/class-admin.php:571
+msgid "Total products with any brand:"
+msgstr ""
+
+#: includes/class-admin.php:573
+msgid "Note: The plugin will transfer both taxonomy and custom attributes."
+msgstr ""
+
+#: includes/class-admin.php:575
+msgid "View Detailed Debug Info"
+msgstr ""
+
+#: includes/class-admin.php:583
+msgid "Backups:"
+msgstr ""
+
+#: includes/class-admin.php:586
+msgid "Transfer backup:"
+msgstr ""
+
+#: includes/class-admin.php:588
+msgid "completed"
+msgstr ""
+
+#: includes/class-admin.php:594
+msgid "Deletion backup:"
+msgstr ""
+
+#: includes/class-admin.php:595
+#, php-format
+msgid "%s product"
+msgid_plural "%s products"
+msgstr[0] ""
+msgstr[1] ""
+
+#: includes/class-admin.php:604
+msgid "Analyze Brands"
+msgstr ""
+
+#: includes/class-admin.php:607
+msgid "Analyze your brands before transfer"
+msgstr ""
+
+#: includes/class-admin.php:612
+msgid "Refresh Counts"
+msgstr ""
+
+#: includes/class-admin.php:615
+msgid "Update statistics"
+msgstr ""
+
+#: includes/class-admin.php:620
+msgid "Start Transfer"
+msgstr ""
+
+#: includes/class-admin.php:623
+msgid "Transfer brands to taxonomy"
+msgstr ""
+
+#: includes/class-admin.php:628
+msgid "Delete Old Brands"
+msgstr ""
+
+#: includes/class-admin.php:631
+msgid "Remove old brand attributes"
+msgstr ""
+
+#: includes/class-admin.php:639
+msgid "Rollback Transfer"
+msgstr ""
+
+#: includes/class-admin.php:642
+msgid "Undo transfer process"
+msgstr ""
+
+#: includes/class-admin.php:650
+msgid "Restore Deleted Brands"
+msgstr ""
+
+#: includes/class-admin.php:653
+msgid "Restore deleted attributes"
+msgstr ""
+
+#: includes/class-admin.php:663
+msgid "Clean Up Backups"
+msgstr ""
+
+#: includes/class-admin.php:666
+msgid "Delete all backup data"
+msgstr ""
+
+#: includes/class-admin.php:673
+msgid "Analysis Results"
+msgstr ""
+
+#: includes/class-admin.php:678
+msgid "Transfer Progress"
+msgstr ""
+
+#: includes/class-admin.php:683
+msgid "WARNING:"
+msgstr ""
+
+#: includes/class-admin.php:683
+msgid "Do not refresh the page until the process is complete!"
+msgstr ""
+
+#: includes/class-admin.php:701
+msgid "Confirm Deletion"
+msgstr ""
+
+#: includes/class-admin.php:704
+msgid "Warning: This will permanently remove the original brand attributes from all products."
+msgstr ""
+
+#: includes/class-admin.php:706
+msgid "This action cannot be undone unless you have backups enabled."
+msgstr ""
+
+#: includes/class-admin.php:708
+msgid "To confirm, please type YES in the box below:"
+msgstr ""
+
+#: includes/class-admin.php:710
+msgid "Type YES to confirm"
+msgstr ""
+
+#: includes/class-admin.php:713
+msgid "Cancel"
+msgstr ""
+
+#: includes/class-admin.php:714
+msgid "Confirm Delete"
+msgstr ""
