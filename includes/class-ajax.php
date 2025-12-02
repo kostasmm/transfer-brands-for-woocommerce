@@ -133,78 +133,89 @@ class TBFW_Transfer_Brands_Ajax {
     
     /**
      * AJAX handler for checking brands
+     *
+     * @since 2.8.5 Added support for brand plugin taxonomies (pwb-brand, etc.)
      */
     public function ajax_check_brands() {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
-        
+
         if (!current_user_can('manage_woocommerce')) {
             wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
-        
+
+        $source_taxonomy = $this->core->get_option('source_taxonomy');
+        $is_brand_plugin = $this->core->get_utils()->is_brand_plugin_taxonomy($source_taxonomy);
+
         $source_terms = get_terms([
-            'taxonomy' => $this->core->get_option('source_taxonomy'), 
+            'taxonomy' => $source_taxonomy,
             'hide_empty' => false
         ]);
-        
+
         if (is_wp_error($source_terms)) {
             wp_send_json_error(['message' => 'Error: ' . $source_terms->get_error_message()]);
             return;
         }
-        
+
         global $wpdb;
-        
-        // Get info about custom attributes
-        $custom_attribute_count = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta} 
-                WHERE meta_key = '_product_attributes' 
-                AND meta_value LIKE %s
-                AND meta_value LIKE %s
-                AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')",
-                '%' . $wpdb->esc_like($this->core->get_option('source_taxonomy')) . '%',
-                '%"is_taxonomy";i:0;%'
-            )
-        );
-        
-        // Sample of products with custom attributes
-        $custom_products = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT post_id, meta_value FROM {$wpdb->postmeta} 
-                WHERE meta_key = '_product_attributes' 
-                AND meta_value LIKE %s
-                AND meta_value LIKE %s
-                AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')
-                LIMIT 10",
-                '%' . $wpdb->esc_like($this->core->get_option('source_taxonomy')) . '%',
-                '%"is_taxonomy";i:0;%'
-            )
-        );
-        
+
+        $custom_attribute_count = 0;
         $custom_samples = [];
-        foreach ($custom_products as $item) {
-            $attributes = maybe_unserialize($item->meta_value);
-            if (is_array($attributes) && isset($attributes[$this->core->get_option('source_taxonomy')])) {
-                $product = wc_get_product($item->post_id);
-                if ($product) {
-                    $custom_samples[] = [
-                        'id' => $item->post_id,
-                        'name' => $product->get_name(),
-                        'value' => $attributes[$this->core->get_option('source_taxonomy')]['value'] ?? 'N/A'
-                    ];
+        $sample_products = [];
+
+        // For brand plugin taxonomies, skip custom attribute checks (they don't use _product_attributes)
+        if (!$is_brand_plugin) {
+            // Get info about custom attributes (only for WooCommerce attributes)
+            $custom_attribute_count = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta}
+                    WHERE meta_key = '_product_attributes'
+                    AND meta_value LIKE %s
+                    AND meta_value LIKE %s
+                    AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')",
+                    '%' . $wpdb->esc_like($source_taxonomy) . '%',
+                    '%"is_taxonomy";i:0;%'
+                )
+            );
+
+            // Sample of products with custom attributes
+            $custom_products = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT post_id, meta_value FROM {$wpdb->postmeta}
+                    WHERE meta_key = '_product_attributes'
+                    AND meta_value LIKE %s
+                    AND meta_value LIKE %s
+                    AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')
+                    LIMIT 10",
+                    '%' . $wpdb->esc_like($source_taxonomy) . '%',
+                    '%"is_taxonomy";i:0;%'
+                )
+            );
+
+            foreach ($custom_products as $item) {
+                $attributes = maybe_unserialize($item->meta_value);
+                if (is_array($attributes) && isset($attributes[$source_taxonomy])) {
+                    $product = wc_get_product($item->post_id);
+                    if ($product) {
+                        $custom_samples[] = [
+                            'id' => $item->post_id,
+                            'name' => $product->get_name(),
+                            'value' => $attributes[$source_taxonomy]['value'] ?? 'N/A'
+                        ];
+                    }
                 }
             }
         }
-        
+
         // Check if any terms already exist in destination
         $conflicting_terms = [];
         $terms_with_images = 0;
-        
+
         foreach ($source_terms as $term) {
             $exists = term_exists($term->name, $this->core->get_option('destination_taxonomy'));
             if ($exists) {
                 $conflicting_terms[] = $term->name;
             }
-            
+
             // Check if term has image using the comprehensive detection method
             $transfer_instance = $this->core->get_transfer();
             // Use reflection to access the private method
@@ -212,52 +223,88 @@ class TBFW_Transfer_Brands_Ajax {
             $method = $reflection->getMethod('find_brand_image');
             $method->setAccessible(true);
             $image_id = $method->invoke($transfer_instance, $term->term_id);
-            
+
             if ($image_id) {
                 $terms_with_images++;
             }
         }
-        
-        // Get some sample products with taxonomy attributes
-        $products_query = new WP_Query([
-            'post_type' => 'product',
-            'posts_per_page' => 5,
-            'tax_query' => [
-                [
-                    'taxonomy' => $this->core->get_option('source_taxonomy'),
-                    'operator' => 'EXISTS',
+
+        // Get sample products - different logic for brand plugins vs WooCommerce attributes
+        if ($is_brand_plugin) {
+            // For brand plugins, query products via taxonomy relationship
+            $products_query = new WP_Query([
+                'post_type' => 'product',
+                'posts_per_page' => 5,
+                'post_status' => 'publish',
+                'tax_query' => [
+                    [
+                        'taxonomy' => $source_taxonomy,
+                        'operator' => 'EXISTS',
+                    ]
                 ]
-            ]
-        ]);
-        
-        $sample_products = [];
-        
-        if ($products_query->have_posts()) {
-            foreach ($products_query->posts as $post) {
-                $product = wc_get_product($post->ID);
-                $attrs = $product->get_attributes();
-                
-                if (isset($attrs[$this->core->get_option('source_taxonomy')])) {
-                    $terms = [];
-                    foreach ($attrs[$this->core->get_option('source_taxonomy')]->get_options() as $term_id) {
-                        $term = get_term($term_id, $this->core->get_option('source_taxonomy'));
-                        if ($term && !is_wp_error($term)) {
-                            $terms[] = $term->name;
-                        }
+            ]);
+
+            if ($products_query->have_posts()) {
+                foreach ($products_query->posts as $post) {
+                    $product = wc_get_product($post->ID);
+                    if (!$product) continue;
+
+                    // Get terms directly from taxonomy
+                    $product_terms = get_the_terms($post->ID, $source_taxonomy);
+                    $term_names = [];
+
+                    if ($product_terms && !is_wp_error($product_terms)) {
+                        $term_names = wp_list_pluck($product_terms, 'name');
                     }
-                    
+
                     $sample_products[] = [
                         'id' => $post->ID,
                         'name' => $product->get_name(),
-                        'brands' => $terms
+                        'brands' => $term_names
                     ];
                 }
             }
+        } else {
+            // For WooCommerce attributes, use the original query
+            $products_query = new WP_Query([
+                'post_type' => 'product',
+                'posts_per_page' => 5,
+                'tax_query' => [
+                    [
+                        'taxonomy' => $source_taxonomy,
+                        'operator' => 'EXISTS',
+                    ]
+                ]
+            ]);
+
+            if ($products_query->have_posts()) {
+                foreach ($products_query->posts as $post) {
+                    $product = wc_get_product($post->ID);
+                    $attrs = $product->get_attributes();
+
+                    if (isset($attrs[$source_taxonomy])) {
+                        $terms = [];
+                        foreach ($attrs[$source_taxonomy]->get_options() as $term_id) {
+                            $term = get_term($term_id, $source_taxonomy);
+                            if ($term && !is_wp_error($term)) {
+                                $terms[] = $term->name;
+                            }
+                        }
+
+                        $sample_products[] = [
+                            'id' => $post->ID,
+                            'name' => $product->get_name(),
+                            'brands' => $terms
+                        ];
+                    }
+                }
+            }
         }
-        
+
         // Add debug info
         $this->core->add_debug("Brand analysis performed", [
             'source_terms' => count($source_terms),
+            'is_brand_plugin' => $is_brand_plugin,
             'custom_attribute_count' => $custom_attribute_count,
             'taxonomy_samples' => count($sample_products),
             'custom_samples' => count($custom_samples)
@@ -296,14 +343,33 @@ class TBFW_Transfer_Brands_Ajax {
         }
 
         $html .= '<h4>' . esc_html__('Source Brands Summary', 'transfer-brands-for-woocommerce') . '</h4>';
-        $html .= '<ul>';
-        $html .= '<li><strong>' . count($source_terms) . '</strong> ' . esc_html__('brands found in taxonomy', 'transfer-brands-for-woocommerce') . ' ' . esc_html($this->core->get_option('source_taxonomy')) . '</li>';
-        $html .= '<li><strong>' . $custom_attribute_count . '</strong> ' . esc_html__('products have custom (non-taxonomy) attributes with name', 'transfer-brands-for-woocommerce') . ' ' . esc_html($this->core->get_option('source_taxonomy')) . '</li>';
-        $html .= '<li><strong>' . $terms_with_images . '</strong> ' . esc_html__('brands have images that will be transferred', 'transfer-brands-for-woocommerce') . '</li>';
-        $html .= '</ul>';
-        
-        // Warning about custom attributes
-        if ($custom_attribute_count > 0) {
+
+        // Show different info for brand plugins vs WooCommerce attributes
+        if ($is_brand_plugin) {
+            $html .= '<div class="notice notice-info inline" style="margin: 0 0 15px 0; padding: 10px 12px;">';
+            $html .= '<p style="margin: 0;"><span class="dashicons dashicons-info" style="color: #2271b1;"></span> ';
+            $html .= '<strong>' . esc_html__('Brand Plugin Detected:', 'transfer-brands-for-woocommerce') . '</strong> ';
+            $html .= esc_html__('Transferring from a third-party brand plugin taxonomy.', 'transfer-brands-for-woocommerce');
+            $html .= '</p></div>';
+
+            // Get product count for brand plugin
+            $brand_plugin_product_count = $this->core->get_utils()->count_products_with_source();
+
+            $html .= '<ul>';
+            $html .= '<li><strong>' . count($source_terms) . '</strong> ' . esc_html__('brands found in taxonomy', 'transfer-brands-for-woocommerce') . ' <code>' . esc_html($source_taxonomy) . '</code></li>';
+            $html .= '<li><strong>' . $brand_plugin_product_count . '</strong> ' . esc_html__('products have brands assigned', 'transfer-brands-for-woocommerce') . '</li>';
+            $html .= '<li><strong>' . $terms_with_images . '</strong> ' . esc_html__('brands have images that will be transferred', 'transfer-brands-for-woocommerce') . '</li>';
+            $html .= '</ul>';
+        } else {
+            $html .= '<ul>';
+            $html .= '<li><strong>' . count($source_terms) . '</strong> ' . esc_html__('brands found in taxonomy', 'transfer-brands-for-woocommerce') . ' <code>' . esc_html($source_taxonomy) . '</code></li>';
+            $html .= '<li><strong>' . $custom_attribute_count . '</strong> ' . esc_html__('products have custom (non-taxonomy) attributes with name', 'transfer-brands-for-woocommerce') . ' <code>' . esc_html($source_taxonomy) . '</code></li>';
+            $html .= '<li><strong>' . $terms_with_images . '</strong> ' . esc_html__('brands have images that will be transferred', 'transfer-brands-for-woocommerce') . '</li>';
+            $html .= '</ul>';
+        }
+
+        // Warning about custom attributes (only for WooCommerce attributes)
+        if (!$is_brand_plugin && $custom_attribute_count > 0) {
             $html .= '<div class="notice notice-warning inline" style="margin-top: 15px;">';
             $html .= '<p><strong>Custom Attributes Detected:</strong> Some of your products use custom (non-taxonomy) attributes for brands.</p>';
             $html .= '<p>The plugin will attempt to convert these to taxonomy terms based on their values.</p>';
@@ -348,20 +414,25 @@ class TBFW_Transfer_Brands_Ajax {
         }
         
         if (!empty($sample_products)) {
-            $html .= '<h4>Sample Taxonomy Products</h4>';
-            $html .= '<p>Here are some products with taxonomy brand attributes:</p>';
+            if ($is_brand_plugin) {
+                $html .= '<h4>' . esc_html__('Sample Products with Brand Plugin Brands', 'transfer-brands-for-woocommerce') . '</h4>';
+                $html .= '<p>' . esc_html__('Here are some products with brands from the brand plugin:', 'transfer-brands-for-woocommerce') . '</p>';
+            } else {
+                $html .= '<h4>' . esc_html__('Sample Products with Brand Attributes', 'transfer-brands-for-woocommerce') . '</h4>';
+                $html .= '<p>' . esc_html__('Here are some products with taxonomy brand attributes:', 'transfer-brands-for-woocommerce') . '</p>';
+            }
             $html .= '<table class="widefat" style="margin-top: 10px;">';
-            $html .= '<thead><tr><th>ID</th><th>Product</th><th>Current Brands</th></tr></thead>';
+            $html .= '<thead><tr><th>ID</th><th>' . esc_html__('Product', 'transfer-brands-for-woocommerce') . '</th><th>' . esc_html__('Current Brands', 'transfer-brands-for-woocommerce') . '</th></tr></thead>';
             $html .= '<tbody>';
-            
+
             foreach ($sample_products as $product) {
                 $html .= '<tr>';
-                $html .= '<td>' . $product['id'] . '</td>';
+                $html .= '<td>' . esc_html($product['id']) . '</td>';
                 $html .= '<td>' . esc_html($product['name']) . '</td>';
                 $html .= '<td>' . esc_html(implode(', ', $product['brands'])) . '</td>';
                 $html .= '</tr>';
             }
-            
+
             $html .= '</tbody></table>';
         }
         

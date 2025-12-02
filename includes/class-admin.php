@@ -302,22 +302,81 @@ class TBFW_Transfer_Brands_Admin {
      * Source taxonomy field callback
      *
      * @since 2.3.0
+     * @since 2.8.5 Added support for Perfect Brands for WooCommerce (pwb-brand)
      */
     public function source_taxonomy_callback() {
         $attribute_taxonomies = wc_get_attribute_taxonomies();
         $source = $this->core->get_option('source_taxonomy', 'pa_brand');
-        
+
         echo '<select name="tbfw_transfer_brands_options[source_taxonomy]">';
-        
-        foreach ($attribute_taxonomies as $tax) {
-            $tax_name = 'pa_' . $tax->attribute_name;
-            echo '<option value="' . esc_attr($tax_name) . '" ' . selected($tax_name, $source, false) . '>';
-            echo esc_html($tax->attribute_label) . ' (' . esc_html($tax_name) . ')';
-            echo '</option>';
+
+        // WooCommerce Product Attributes section
+        if (!empty($attribute_taxonomies)) {
+            echo '<optgroup label="' . esc_attr__('WooCommerce Attributes', 'transfer-brands-for-woocommerce') . '">';
+            foreach ($attribute_taxonomies as $tax) {
+                $tax_name = 'pa_' . $tax->attribute_name;
+                echo '<option value="' . esc_attr($tax_name) . '" ' . selected($tax_name, $source, false) . '>';
+                echo esc_html($tax->attribute_label) . ' (' . esc_html($tax_name) . ')';
+                echo '</option>';
+            }
+            echo '</optgroup>';
         }
-        
+
+        // Brand Plugins section - check for supported brand plugin taxonomies
+        $brand_plugins = $this->get_supported_brand_plugins();
+        if (!empty($brand_plugins)) {
+            echo '<optgroup label="' . esc_attr__('Brand Plugins', 'transfer-brands-for-woocommerce') . '">';
+            foreach ($brand_plugins as $plugin) {
+                echo '<option value="' . esc_attr($plugin['taxonomy']) . '" ' . selected($plugin['taxonomy'], $source, false) . '>';
+                echo esc_html($plugin['label']);
+                echo '</option>';
+            }
+            echo '</optgroup>';
+        }
+
         echo '</select>';
-        echo '<p class="description">' . esc_html__('Select the source attribute that contains your brands.', 'transfer-brands-for-woocommerce') . '</p>';
+        echo '<p class="description">' . esc_html__('Select the source attribute or taxonomy that contains your brands.', 'transfer-brands-for-woocommerce') . '</p>';
+
+        // Show info about detected brand plugins
+        if (!empty($brand_plugins)) {
+            echo '<p class="description" style="color: #2271b1;"><span class="dashicons dashicons-info" style="font-size: 14px; width: 14px; height: 14px;"></span> ';
+            echo esc_html__('Detected brand plugin(s):', 'transfer-brands-for-woocommerce') . ' ';
+            $plugin_names = array_column($brand_plugins, 'name');
+            echo '<strong>' . esc_html(implode(', ', $plugin_names)) . '</strong>';
+            echo '</p>';
+        }
+    }
+
+    /**
+     * Get list of supported brand plugins that are active
+     *
+     * @since 2.8.5
+     * @return array Array of supported brand plugins with their taxonomies
+     */
+    private function get_supported_brand_plugins() {
+        $plugins = [];
+
+        // Perfect Brands for WooCommerce
+        if (taxonomy_exists('pwb-brand')) {
+            $plugins[] = [
+                'taxonomy' => 'pwb-brand',
+                'name' => 'Perfect Brands for WooCommerce',
+                'label' => __('Perfect Brands (pwb-brand)', 'transfer-brands-for-woocommerce'),
+                'image_meta_key' => 'pwb_brand_image'
+            ];
+        }
+
+        // YITH WooCommerce Brands (uses yith_product_brand taxonomy)
+        if (taxonomy_exists('yith_product_brand')) {
+            $plugins[] = [
+                'taxonomy' => 'yith_product_brand',
+                'name' => 'YITH WooCommerce Brands',
+                'label' => __('YITH Brands (yith_product_brand)', 'transfer-brands-for-woocommerce'),
+                'image_meta_key' => 'yith_woocommerce_brand_thumbnail_id'
+            ];
+        }
+
+        return $plugins;
     }
     
     /**

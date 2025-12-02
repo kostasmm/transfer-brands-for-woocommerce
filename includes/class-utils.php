@@ -56,34 +56,85 @@ class TBFW_Transfer_Brands_Utils {
     
     /**
      * Count products with source brand - Improved version for both taxonomy and custom attributes
-     * 
+     *
+     * @since 2.8.5 Added support for brand plugin taxonomies (pwb-brand, etc.)
      * @return int Number of products
      */
     public function count_products_with_source() {
         global $wpdb;
-        
+
         $source_taxonomy = $this->core->get_option('source_taxonomy');
-        
-        // Get all products with this attribute, regardless of whether it's a taxonomy or custom attribute
-        $count = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT COUNT(DISTINCT post_id) 
-                FROM {$wpdb->postmeta} 
-                WHERE meta_key = '_product_attributes' 
-                AND meta_value LIKE %s
-                AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')",
-                '%' . $wpdb->esc_like($source_taxonomy) . '%'
-            )
-        );
-        
+
+        // Check if this is a brand plugin taxonomy (not a WooCommerce attribute)
+        if ($this->is_brand_plugin_taxonomy($source_taxonomy)) {
+            // For brand plugin taxonomies, count products using the taxonomy relationship
+            $count = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(DISTINCT tr.object_id)
+                    FROM {$wpdb->term_relationships} tr
+                    INNER JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+                    INNER JOIN {$wpdb->posts} p ON tr.object_id = p.ID
+                    WHERE tt.taxonomy = %s
+                    AND p.post_type = 'product'
+                    AND p.post_status = 'publish'",
+                    $source_taxonomy
+                )
+            );
+        } else {
+            // For WooCommerce attributes, use the _product_attributes meta query
+            $count = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(DISTINCT post_id)
+                    FROM {$wpdb->postmeta}
+                    WHERE meta_key = '_product_attributes'
+                    AND meta_value LIKE %s
+                    AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')",
+                    '%' . $wpdb->esc_like($source_taxonomy) . '%'
+                )
+            );
+        }
+
         // Log debug info
         $this->core->add_debug("Product count for {$source_taxonomy}: {$count}", [
             'source_taxonomy' => $source_taxonomy,
-            'sql' => $wpdb->last_query,
+            'is_brand_plugin' => $this->is_brand_plugin_taxonomy($source_taxonomy),
             'count' => $count
         ]);
-        
+
         return $count;
+    }
+
+    /**
+     * Check if the given taxonomy is from a brand plugin (not a WooCommerce attribute)
+     *
+     * @since 2.8.5
+     * @param string $taxonomy The taxonomy to check
+     * @return bool True if it's a brand plugin taxonomy
+     */
+    public function is_brand_plugin_taxonomy($taxonomy) {
+        // List of known brand plugin taxonomies
+        $brand_plugin_taxonomies = [
+            'pwb-brand',           // Perfect Brands for WooCommerce
+            'yith_product_brand',  // YITH WooCommerce Brands
+        ];
+
+        return in_array($taxonomy, $brand_plugin_taxonomies, true);
+    }
+
+    /**
+     * Get the image meta key for a brand plugin taxonomy
+     *
+     * @since 2.8.5
+     * @param string $taxonomy The taxonomy to get the image key for
+     * @return string|false The meta key or false if not a brand plugin
+     */
+    public function get_brand_plugin_image_key($taxonomy) {
+        $image_keys = [
+            'pwb-brand' => 'pwb_brand_image',
+            'yith_product_brand' => 'yith_woocommerce_brand_thumbnail_id',
+        ];
+
+        return isset($image_keys[$taxonomy]) ? $image_keys[$taxonomy] : false;
     }
     
     /**

@@ -119,54 +119,69 @@ class TBFW_Transfer_Brands_Transfer {
     
     /**
      * Process a batch of products
-     * 
+     *
+     * @since 2.8.5 Added support for brand plugin taxonomies (pwb-brand, etc.)
      * @return array Result data
      */
     public function process_products_batch() {
         global $wpdb;
-        
+
+        $source_taxonomy = $this->core->get_option('source_taxonomy');
+        $is_brand_plugin = $this->core->get_utils()->is_brand_plugin_taxonomy($source_taxonomy);
+
         // Get products that have already been processed
         $processed_products = get_option('tbfw_brands_processed_ids', []);
-        
-        // Create exclusion placeholders for already processed products
-        $exclude_condition = '';
-        $query_args = [
-            '%' . $wpdb->esc_like($this->core->get_option('source_taxonomy')) . '%'
-        ];
-        
-        if (!empty($processed_products)) {
-            $placeholders = implode(',', array_fill(0, count($processed_products), '%d'));
-            $exclude_condition = " AND post_id NOT IN ($placeholders)";
-            $query_args = array_merge($query_args, $processed_products);
+
+        // Different query logic for brand plugin taxonomies vs WooCommerce attributes
+        if ($is_brand_plugin) {
+            // For brand plugin taxonomies, query products via taxonomy relationship
+            $product_ids = $this->get_brand_plugin_products($source_taxonomy, $processed_products);
+            $total = $this->count_brand_plugin_products($source_taxonomy);
+        } else {
+            // For WooCommerce attributes, use the original _product_attributes meta query
+            $exclude_condition = '';
+            $query_args = [
+                '%' . $wpdb->esc_like($source_taxonomy) . '%'
+            ];
+
+            if (!empty($processed_products)) {
+                $placeholders = implode(',', array_fill(0, count($processed_products), '%d'));
+                $exclude_condition = " AND post_id NOT IN ($placeholders)";
+                $query_args = array_merge($query_args, $processed_products);
+            }
+
+            $query_args[] = $this->core->get_batch_size();
+
+            // Find products with brand attribute that haven't been processed yet
+            $query = "SELECT DISTINCT post_id
+                    FROM {$wpdb->postmeta}
+                    WHERE meta_key = '_product_attributes'
+                    AND meta_value LIKE %s
+                    AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')
+                    {$exclude_condition}
+                    LIMIT %d";
+
+            $product_ids = $wpdb->get_col(
+                $wpdb->prepare($query, $query_args)
+            );
+
+            // Count total products for progress calculation
+            $total = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(DISTINCT post_id)
+                    FROM {$wpdb->postmeta}
+                    WHERE meta_key = '_product_attributes'
+                    AND meta_value LIKE %s
+                    AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')",
+                    '%' . $wpdb->esc_like($source_taxonomy) . '%'
+                )
+            );
         }
-        
-        $query_args[] = $this->core->get_batch_size();
-        
-        // Find products with brand attribute that haven't been processed yet
-        $query = "SELECT DISTINCT post_id 
-                FROM {$wpdb->postmeta} 
-                WHERE meta_key = '_product_attributes' 
-                AND meta_value LIKE %s 
-                AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')
-                {$exclude_condition}
-                LIMIT %d";
-        
-        $product_ids = $wpdb->get_col(
-            $wpdb->prepare($query, $query_args)
-        );
-        
-        // Count total products for progress calculation
-        $total = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT COUNT(DISTINCT post_id) 
-                FROM {$wpdb->postmeta} 
-                WHERE meta_key = '_product_attributes' 
-                AND meta_value LIKE %s
-                AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')",
-                '%' . $wpdb->esc_like($this->core->get_option('source_taxonomy')) . '%'
-            )
-        );
-        $this->core->add_debug("Total products with source brand", ['total' => $total]);
+
+        $this->core->add_debug("Total products with source brand", [
+            'total' => $total,
+            'is_brand_plugin' => $is_brand_plugin
+        ]);
         
         // If there are no more products to process, we complete
         if (empty($product_ids)) {
@@ -184,135 +199,176 @@ class TBFW_Transfer_Brands_Transfer {
         $newly_processed = [];
         $processed_count = 0;
         $custom_processed = 0;
+        $brand_plugin_processed = 0;
         $log_message = '';
-        
+
         foreach ($product_ids as $product_id) {
             $product = wc_get_product($product_id);
             if (!$product) continue;
-            
+
             $newly_processed[] = $product_id;
             $processed_count++;
-            
-            $attrs = $product->get_attributes();
-            
-            // Get the raw product attributes
-            $raw_attributes = get_post_meta($product_id, '_product_attributes', true);
-            
-            // First try to process it as a taxonomy attribute
-            if (isset($attrs[$this->core->get_option('source_taxonomy')])) {
-                $brand_ids = [];
-                
-                // Check if this is a taxonomy attribute
-                if ($attrs[$this->core->get_option('source_taxonomy')]->is_taxonomy()) {
-                    // Get term IDs from the attribute
-                    $brand_ids = $attrs[$this->core->get_option('source_taxonomy')]->get_options();
-                    
+
+            // Handle brand plugin taxonomies differently
+            if ($is_brand_plugin) {
+                // For brand plugins like Perfect Brands, get terms directly from taxonomy
+                $source_terms = get_the_terms($product_id, $source_taxonomy);
+
+                if ($source_terms && !is_wp_error($source_terms)) {
                     $new_brand_ids = [];
-                    foreach ($brand_ids as $old_id) {
-                        $term = get_term($old_id, $this->core->get_option('source_taxonomy'));
-                        if ($term && !is_wp_error($term)) {
-                            $new_term = get_term_by('name', $term->name, $this->core->get_option('destination_taxonomy'));
-                            if ($new_term) {
-                                $new_brand_ids[] = (int)$new_term->term_id;
-                            }
+
+                    foreach ($source_terms as $term) {
+                        // Find corresponding term in destination taxonomy
+                        $new_term = get_term_by('name', $term->name, $this->core->get_option('destination_taxonomy'));
+                        if ($new_term) {
+                            $new_brand_ids[] = (int)$new_term->term_id;
                         }
                     }
-                    
+
                     if (!empty($new_brand_ids)) {
                         // Store previous assignments for potential rollback
                         $this->core->get_backup()->backup_product_terms($product_id);
-                        
+
                         // Assign new terms
                         wp_set_object_terms($product_id, $new_brand_ids, $this->core->get_option('destination_taxonomy'));
+                        $brand_plugin_processed++;
+
+                        $this->core->add_debug("Brand plugin product processed", [
+                            'product_id' => $product_id,
+                            'source_taxonomy' => $source_taxonomy,
+                            'source_terms' => wp_list_pluck($source_terms, 'name'),
+                            'new_term_ids' => $new_brand_ids
+                        ]);
                     }
-                } else {
-                    // This is a custom attribute, not a taxonomy
-                    $custom_processed++;
-                    
-                    // Get the value from the attribute
-                    if (isset($raw_attributes[$this->core->get_option('source_taxonomy')]) && 
-                        isset($raw_attributes[$this->core->get_option('source_taxonomy')]['value'])) {
-                        
-                        $brand_value = $raw_attributes[$this->core->get_option('source_taxonomy')]['value'];
-                        
-                        // Try to find a term with this ID first (common case)
-                        $term = get_term($brand_value, $this->core->get_option('source_taxonomy'));
-                        
-                        if ($term && !is_wp_error($term)) {
-                            // We found a matching term by ID
-                            $new_term = get_term_by('name', $term->name, $this->core->get_option('destination_taxonomy'));
-                            if ($new_term) {
-                                // Store previous assignments for potential rollback
-                                $this->core->get_backup()->backup_product_terms($product_id);
-                                
-                                // Assign new term
-                                wp_set_object_terms($product_id, [(int)$new_term->term_id], $this->core->get_option('destination_taxonomy'));
-                                
-                                $this->core->add_debug("Custom attribute processed using term ID", [
-                                    'product_id' => $product_id,
-                                    'brand_value' => $brand_value,
-                                    'term_id' => $term->term_id,
-                                    'term_name' => $term->name,
-                                    'new_term_id' => $new_term->term_id
-                                ]);
+                }
+            } else {
+                // Original logic for WooCommerce attributes
+                $attrs = $product->get_attributes();
+
+                // Get the raw product attributes
+                $raw_attributes = get_post_meta($product_id, '_product_attributes', true);
+
+                // First try to process it as a taxonomy attribute
+                if (isset($attrs[$source_taxonomy])) {
+                    $brand_ids = [];
+
+                    // Check if this is a taxonomy attribute
+                    if ($attrs[$source_taxonomy]->is_taxonomy()) {
+                        // Get term IDs from the attribute
+                        $brand_ids = $attrs[$source_taxonomy]->get_options();
+
+                        $new_brand_ids = [];
+                        foreach ($brand_ids as $old_id) {
+                            $term = get_term($old_id, $source_taxonomy);
+                            if ($term && !is_wp_error($term)) {
+                                $new_term = get_term_by('name', $term->name, $this->core->get_option('destination_taxonomy'));
+                                if ($new_term) {
+                                    $new_brand_ids[] = (int)$new_term->term_id;
+                                }
                             }
-                        } else {
-                            // If we couldn't find by ID, treat it as a name or slug
-                            $new_term = get_term_by('name', $brand_value, $this->core->get_option('destination_taxonomy'));
-                            
-                            if (!$new_term) {
-                                // Try creating the term
-                                $result = wp_insert_term($brand_value, $this->core->get_option('destination_taxonomy'));
-                                if (!is_wp_error($result)) {
-                                    $new_term_id = $result['term_id'];
-                                    
+                        }
+
+                        if (!empty($new_brand_ids)) {
+                            // Store previous assignments for potential rollback
+                            $this->core->get_backup()->backup_product_terms($product_id);
+
+                            // Assign new terms
+                            wp_set_object_terms($product_id, $new_brand_ids, $this->core->get_option('destination_taxonomy'));
+                        }
+                    } else {
+                        // This is a custom attribute, not a taxonomy
+                        $custom_processed++;
+
+                        // Get the value from the attribute
+                        if (isset($raw_attributes[$source_taxonomy]) &&
+                            isset($raw_attributes[$source_taxonomy]['value'])) {
+
+                            $brand_value = $raw_attributes[$source_taxonomy]['value'];
+
+                            // Try to find a term with this ID first (common case)
+                            $term = get_term($brand_value, $source_taxonomy);
+
+                            if ($term && !is_wp_error($term)) {
+                                // We found a matching term by ID
+                                $new_term = get_term_by('name', $term->name, $this->core->get_option('destination_taxonomy'));
+                                if ($new_term) {
                                     // Store previous assignments for potential rollback
                                     $this->core->get_backup()->backup_product_terms($product_id);
-                                    
+
                                     // Assign new term
-                                    wp_set_object_terms($product_id, [$new_term_id], $this->core->get_option('destination_taxonomy'));
-                                    
-                                    $this->core->add_debug("Custom attribute processed by creating new term", [
+                                    wp_set_object_terms($product_id, [(int)$new_term->term_id], $this->core->get_option('destination_taxonomy'));
+
+                                    $this->core->add_debug("Custom attribute processed using term ID", [
                                         'product_id' => $product_id,
                                         'brand_value' => $brand_value,
-                                        'new_term_id' => $new_term_id
-                                    ]);
-                                } else {
-                                    $this->core->add_debug("Error creating term from custom attribute", [
-                                        'product_id' => $product_id,
-                                        'brand_value' => $brand_value,
-                                        'error' => $result->get_error_message()
+                                        'term_id' => $term->term_id,
+                                        'term_name' => $term->name,
+                                        'new_term_id' => $new_term->term_id
                                     ]);
                                 }
                             } else {
-                                // Store previous assignments for potential rollback
-                                $this->core->get_backup()->backup_product_terms($product_id);
-                                
-                                // Assign existing term
-                                wp_set_object_terms($product_id, [(int)$new_term->term_id], $this->core->get_option('destination_taxonomy'));
-                                
-                                $this->core->add_debug("Custom attribute processed using existing term", [
-                                    'product_id' => $product_id,
-                                    'brand_value' => $brand_value,
-                                    'new_term_id' => $new_term->term_id,
-                                    'new_term_name' => $new_term->name
-                                ]);
+                                // If we couldn't find by ID, treat it as a name or slug
+                                $new_term = get_term_by('name', $brand_value, $this->core->get_option('destination_taxonomy'));
+
+                                if (!$new_term) {
+                                    // Try creating the term
+                                    $result = wp_insert_term($brand_value, $this->core->get_option('destination_taxonomy'));
+                                    if (!is_wp_error($result)) {
+                                        $new_term_id = $result['term_id'];
+
+                                        // Store previous assignments for potential rollback
+                                        $this->core->get_backup()->backup_product_terms($product_id);
+
+                                        // Assign new term
+                                        wp_set_object_terms($product_id, [$new_term_id], $this->core->get_option('destination_taxonomy'));
+
+                                        $this->core->add_debug("Custom attribute processed by creating new term", [
+                                            'product_id' => $product_id,
+                                            'brand_value' => $brand_value,
+                                            'new_term_id' => $new_term_id
+                                        ]);
+                                    } else {
+                                        $this->core->add_debug("Error creating term from custom attribute", [
+                                            'product_id' => $product_id,
+                                            'brand_value' => $brand_value,
+                                            'error' => $result->get_error_message()
+                                        ]);
+                                    }
+                                } else {
+                                    // Store previous assignments for potential rollback
+                                    $this->core->get_backup()->backup_product_terms($product_id);
+
+                                    // Assign existing term
+                                    wp_set_object_terms($product_id, [(int)$new_term->term_id], $this->core->get_option('destination_taxonomy'));
+
+                                    $this->core->add_debug("Custom attribute processed using existing term", [
+                                        'product_id' => $product_id,
+                                        'brand_value' => $brand_value,
+                                        'new_term_id' => $new_term->term_id,
+                                        'new_term_name' => $new_term->name
+                                    ]);
+                                }
                             }
                         }
                     }
                 }
             }
         }
-        
+
         // Update the list of processed products
         $processed_products = array_merge($processed_products, $newly_processed);
         update_option('tbfw_brands_processed_ids', $processed_products);
-        
+
         // Calculate overall progress
         $processed_total = count($processed_products);
         $percent = min(95, 45 + round(($processed_total / ($total + 1)) * 50));
-        
-        $log_message = "Processed {$processed_count} products in this batch ({$custom_processed} with custom attributes). Total processed: {$processed_total} of {$total}";
+
+        // Build log message based on processing type
+        if ($is_brand_plugin) {
+            $log_message = "Processed {$processed_count} products from brand plugin ({$brand_plugin_processed} transferred). Total processed: {$processed_total} of {$total}";
+        } else {
+            $log_message = "Processed {$processed_count} products in this batch ({$custom_processed} with custom attributes). Total processed: {$processed_total} of {$total}";
+        }
         
         return [
             'success' => true,
@@ -631,12 +687,73 @@ class TBFW_Transfer_Brands_Transfer {
                     '%' . $wpdb->esc_like($path)
                 )
             );
-            
+
             if ($attachment_id) {
                 return (int)$attachment_id;
             }
         }
-        
+
         return false;
+    }
+
+    /**
+     * Get products from a brand plugin taxonomy
+     *
+     * @since 2.8.5
+     * @param string $taxonomy The brand plugin taxonomy (e.g., pwb-brand)
+     * @param array $exclude_ids Product IDs to exclude (already processed)
+     * @return array Array of product IDs
+     */
+    private function get_brand_plugin_products($taxonomy, $exclude_ids = []) {
+        global $wpdb;
+
+        $batch_size = $this->core->get_batch_size();
+
+        // Build query to get products with this taxonomy
+        $query = "SELECT DISTINCT tr.object_id
+                  FROM {$wpdb->term_relationships} tr
+                  INNER JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+                  INNER JOIN {$wpdb->posts} p ON tr.object_id = p.ID
+                  WHERE tt.taxonomy = %s
+                  AND p.post_type = 'product'
+                  AND p.post_status = 'publish'";
+
+        $query_args = [$taxonomy];
+
+        // Exclude already processed products
+        if (!empty($exclude_ids)) {
+            $placeholders = implode(',', array_fill(0, count($exclude_ids), '%d'));
+            $query .= " AND tr.object_id NOT IN ($placeholders)";
+            $query_args = array_merge($query_args, $exclude_ids);
+        }
+
+        $query .= " ORDER BY tr.object_id ASC LIMIT %d";
+        $query_args[] = $batch_size;
+
+        return $wpdb->get_col($wpdb->prepare($query, $query_args));
+    }
+
+    /**
+     * Count total products with a brand plugin taxonomy
+     *
+     * @since 2.8.5
+     * @param string $taxonomy The brand plugin taxonomy
+     * @return int Total number of products
+     */
+    private function count_brand_plugin_products($taxonomy) {
+        global $wpdb;
+
+        return (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(DISTINCT tr.object_id)
+                FROM {$wpdb->term_relationships} tr
+                INNER JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+                INNER JOIN {$wpdb->posts} p ON tr.object_id = p.ID
+                WHERE tt.taxonomy = %s
+                AND p.post_type = 'product'
+                AND p.post_status = 'publish'",
+                $taxonomy
+            )
+        );
     }
 }
