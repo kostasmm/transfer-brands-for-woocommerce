@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Plugin Name: Transfer Brands for WooCommerce
  * Plugin URI: https://pluginatlas.com/transfer-brands-for-woocommerce
