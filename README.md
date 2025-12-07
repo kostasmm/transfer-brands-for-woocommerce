@@ -3,8 +3,8 @@
 [![WordPress Plugin Version](https://img.shields.io/wordpress/plugin/v/transfer-brands-for-woocommerce)](https://wordpress.org/plugins/transfer-brands-for-woocommerce/)
 [![WordPress Plugin Downloads](https://img.shields.io/wordpress/plugin/dt/transfer-brands-for-woocommerce)](https://wordpress.org/plugins/transfer-brands-for-woocommerce/)
 [![WordPress Plugin Rating](https://img.shields.io/wordpress/plugin/stars/transfer-brands-for-woocommerce)](https://wordpress.org/plugins/transfer-brands-for-woocommerce/)
-[![WordPress Tested](https://img.shields.io/badge/WordPress-6.8.2-green.svg)](https://wordpress.org/)
-[![WooCommerce Tested](https://img.shields.io/badge/WooCommerce-10.0.4-purple.svg)](https://woocommerce.com/)
+[![WordPress Tested](https://img.shields.io/badge/WordPress-6.9-green.svg)](https://wordpress.org/)
+[![WooCommerce Tested](https://img.shields.io/badge/WooCommerce-10.3.6-purple.svg)](https://woocommerce.com/)
 [![PHP Version](https://img.shields.io/badge/PHP-7.4%2B-777BB4.svg)](https://php.net/)
 [![License](https://img.shields.io/badge/license-GPL--2.0%2B-blue.svg)](https://www.gnu.org/licenses/gpl-2.0.html)
 
