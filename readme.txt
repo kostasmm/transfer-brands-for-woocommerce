@@ -3,7 +3,7 @@ Contributors: malakontask
 Tags: woocommerce, brands, migration, taxonomy, transfer
 Requires at least: 6.0
 Tested up to: 6.9
-Stable tag: 2.8.6
+Stable tag: 2.8.7
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -117,6 +117,10 @@ Enable debug mode in the plugin settings to access detailed logs, which can help
 5. Debug and troubleshooting tools
 
 == Changelog ==
+
+= 2.8.7 =
+* Fixed: Removed UTF-8 BOM that caused "3 characters of unexpected output" warning during activation
+
 
 = 2.8.6 =
 * Updated: Compatibility with WordPress 6.9
