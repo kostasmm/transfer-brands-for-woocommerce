@@ -69,7 +69,7 @@ The plugin automatically detects and transfers brand images from:
 
 ## Support
 
-- **Documentation**: [pluginatlas.com/transfer-brands](https://pluginatlas.com/transfer-brands)
+- **Documentation**: [pluginatlas.com/transfer-brands-for-woocommerce](https://pluginatlas.com/transfer-brands-for-woocommerce/)
 - **Support**: [WordPress.org Forums](https://wordpress.org/support/plugin/transfer-brands-for-woocommerce/)
 - **Issues**: [GitHub Issues](https://github.com/kostasmm/transfer-brands-for-woocommerce/issues)
 
