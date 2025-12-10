@@ -8,7 +8,7 @@
 [![PHP Version](https://img.shields.io/badge/PHP-7.4%2B-777BB4.svg)](https://php.net/)
 [![License](https://img.shields.io/badge/license-GPL--2.0%2B-blue.svg)](https://www.gnu.org/licenses/gpl-2.0.html)
 
-Official WooCommerce 9.6 Brand Migration Tool - Safely transfer brand attributes to the new taxonomy.
+Official WooCommerce 9.6 brand migration tool. Transfer from Perfect Brands, YITH, or custom attributes with backup and image support.
 
 ## Why This Plugin?
 
@@ -18,6 +18,9 @@ Transfer Brands for WooCommerce provides the missing link that WooCommerce doesn
 
 ## Features
 
+- **Smart Detection** - Automatically detects Perfect Brands, YITH, and other brand plugins
+- **One-Click Switching** - Switch between brand sources without navigating to settings
+- **Preview Transfer** - See exactly what will happen before starting
 - **User-friendly Interface** - Intuitive admin interface with real-time progress
 - **Universal Image Transfer** - Automatically transfers brand images from 30+ themes
 - **Theme Compatibility** - Supports Woodmart, Porto, Flatsome, XStore, Electro, and more
@@ -27,7 +30,7 @@ Transfer Brands for WooCommerce provides the missing link that WooCommerce doesn
 - **Analysis Tool** - Analyze brands before transfer to identify potential issues
 - **HPOS Compatible** - Full compatibility with WooCommerce High-Performance Order Storage
 - **ACF Support** - Works with Advanced Custom Fields brand images
-- **Brand Plugin Support** - Compatible with Perfect Brands and YITH WooCommerce Brands
+- **Accessibility** - Full keyboard navigation and screen reader support
 
 ## Requirements
 

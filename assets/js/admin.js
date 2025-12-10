@@ -32,25 +32,80 @@ jQuery(document).ready(function ($) {
         }
     });
 
-    // Modal functions
+    /**
+     * Set button loading state - prevents double-clicks
+     */
+    function setButtonLoading($button, isLoading) {
+        if (isLoading) {
+            $button.data('original-text', $button.text());
+            $button.prop('disabled', true).addClass('tbfw-loading')
+                   .append('<span class="spinner is-active" style="margin: 0 0 0 5px; float: none; vertical-align: middle;"></span>');
+        } else {
+            $button.prop('disabled', false).removeClass('tbfw-loading').find('.spinner').remove();
+            if ($button.data('original-text')) { $button.text($button.data('original-text')); }
+        }
+    }
+
+    /**
+     * Scroll to results with highlight animation
+     */
+    function scrollToResults(selector) {
+        var $element = $(selector);
+        if ($element.length && $element.is(':visible')) {
+            // Smooth scroll to element with offset for admin bar
+            $('html, body').animate({
+                scrollTop: $element.offset().top - 50
+            }, 400, function() {
+                // Add highlight animation
+                $element.addClass('tbfw-highlight');
+                setTimeout(function() {
+                    $element.removeClass('tbfw-highlight');
+                }, 2000);
+            });
+        }
+    }
+
+    // Modal with accessibility
     function openModal(modalId) {
-        $('#' + modalId).fadeIn(300);
+        var $modal = $('#' + modalId);
+        $modal.data('previous-focus', document.activeElement);
+        $modal.fadeIn(300, function() {
+            var $first = $modal.find('input:not(:disabled), button:not(:disabled)').first();
+            if ($first.length) { $first.focus(); }
+        });
+        $modal.attr('aria-hidden', 'false');
+        $modal.on('keydown.tbfw-modal', function(e) {
+            if (e.key === 'Tab') {
+                var $focusable = $modal.find('input:not(:disabled), button:not(:disabled)');
+                var $f = $focusable.first(), $l = $focusable.last();
+                if (e.shiftKey && document.activeElement === $f[0]) { e.preventDefault(); $l.focus(); }
+                else if (!e.shiftKey && document.activeElement === $l[0]) { e.preventDefault(); $f.focus(); }
+            }
+        });
     }
 
     function closeModal(modalId) {
-        $('#' + modalId).fadeOut(300);
+        var $modal = $('#' + modalId);
+        $modal.fadeOut(300, function() {
+            var prev = $modal.data('previous-focus');
+            if (prev) { $(prev).focus(); }
+        });
+        $modal.attr('aria-hidden', 'true').off('keydown.tbfw-modal');
     }
 
-    // Close modal when clicking the X
-    $('.tbfw-tb-modal-close').on('click', function () {
-        $(this).closest('.tbfw-tb-modal').fadeOut(300);
+    // Escape key closes modals
+    $(document).on('keydown', function(e) {
+        if (e.key === 'Escape') { $('.tbfw-tb-modal:visible').each(function() { closeModal(this.id); }); }
     });
 
-    // Close modal when clicking outside the modal content
+    // Close modal when clicking X
+    $('.tbfw-tb-modal-close').on('click', function () {
+        closeModal($(this).closest('.tbfw-tb-modal').attr('id'));
+    });
+
+    // Close modal when clicking outside
     $('.tbfw-tb-modal').on('click', function (e) {
-        if ($(e.target).hasClass('tbfw-tb-modal')) {
-            $(this).fadeOut(300);
-        }
+        if ($(e.target).hasClass('tbfw-tb-modal')) { closeModal(this.id); }
     });
 
     /**
@@ -183,6 +238,9 @@ jQuery(document).ready(function ($) {
 
     // Analyze brands
     $('#tbfw-tb-check').on('click', function () {
+        var $button = $(this);
+        setButtonLoading($button, true);
+        
         $('#tbfw-tb-analysis').show();
         $('#tbfw-tb-analysis-content').html('<p>Analyzing brands... please wait.</p>');
 
@@ -190,13 +248,18 @@ jQuery(document).ready(function ($) {
             action: 'tbfw_check_brands',
             nonce: nonce
         }, function (response) {
+            setButtonLoading($button, false);
             if (response.success) {
                 $('#tbfw-tb-analysis-content').html(response.data.html);
             } else {
                 $('#tbfw-tb-analysis-content').html('<p class="error">' + i18n.error + ' ' + response.data.message + '</p>');
             }
+            // Scroll to results and highlight
+            scrollToResults('#tbfw-tb-analysis');
         }).fail(function (xhr, status, error) {
+            setButtonLoading($button, false);
             $('#tbfw-tb-analysis-content').html('<p class="error">' + i18n.ajax_error + ' ' + error + '</p>');
+            scrollToResults('#tbfw-tb-analysis');
         });
     });
 
@@ -508,10 +571,14 @@ jQuery(document).ready(function ($) {
         });
     });
 
-    // Refresh Counts button
-    $('#tbfw-tb-refresh-counts').on('click', function () {
-        var $button = $(this);
-        $button.prop('disabled', true).text('Refreshing...');
+    // Refresh Counts link
+    $('#tbfw-tb-refresh-counts').on('click', function (e) {
+        e.preventDefault();
+        var $link = $(this);
+        
+        if ($link.hasClass('tbfw-refreshing')) return;
+        
+        $link.addClass('tbfw-refreshing');
 
         $.post(ajaxUrl, {
             action: 'tbfw_refresh_counts',
@@ -522,11 +589,11 @@ jQuery(document).ready(function ($) {
                 location.reload();
             } else {
                 alert(i18n.error + ' ' + response.data.message);
-                $button.prop('disabled', false).text('Refresh Counts');
+                $link.removeClass('tbfw-refreshing');
             }
         }).fail(function () {
             alert('Network error occurred while refreshing counts.');
-            $button.prop('disabled', false).text('Refresh Counts');
+            $link.removeClass('tbfw-refreshing');
         });
     });
 
@@ -542,4 +609,109 @@ jQuery(document).ready(function ($) {
             $link.text('[Show details]');
         }
     });
+
+
+    // Preview Transfer button
+    $('#tbfw-tb-preview').on('click', function () {
+        var $button = $(this);
+        setButtonLoading($button, true);
+
+        $.post(ajaxUrl, {
+            action: 'tbfw_preview_transfer',
+            nonce: nonce
+        }, function (response) {
+            setButtonLoading($button, false);
+
+            if (response.success) {
+                // Show preview panel with results
+                $('#tbfw-preview-content').html(response.data.html);
+                $('#tbfw-tb-preview-results').show();
+
+                // Scroll to preview with highlight
+                scrollToResults('#tbfw-tb-preview-results');
+            } else {
+                alert(i18n.error + ' ' + (response.data.message || 'Unknown error'));
+            }
+        }).fail(function () {
+            setButtonLoading($button, false);
+            alert('Network error occurred while generating preview.');
+        });
+    });
+
+    // Start Transfer from Preview panel
+    $('#tbfw-tb-start-from-preview').on('click', function () {
+        // Hide preview panel
+        $('#tbfw-tb-preview-results').hide();
+
+        // Trigger the main start transfer button
+        $('#tbfw-tb-start').trigger('click');
+    });
+
+    // Cancel Preview
+    $('#tbfw-tb-cancel-preview').on('click', function () {
+        $('#tbfw-tb-preview-results').hide();
+    });
+
+
+    // Quick source switch handler
+    $('#tbfw-switch-source').on('click', function () {
+        var $button = $(this);
+        var taxonomy = $button.data('taxonomy');
+
+        if (!taxonomy) {
+            alert('No taxonomy specified');
+            return;
+        }
+
+        setButtonLoading($button, true);
+
+        $.post(ajaxUrl, {
+            action: 'tbfw_switch_source',
+            nonce: nonce,
+            taxonomy: taxonomy
+        }, function (response) {
+            if (response.success) {
+                // Reload page to show new settings
+                location.reload();
+            } else {
+                setButtonLoading($button, false);
+                alert(i18n.error + ' ' + (response.data.message || 'Unknown error'));
+            }
+        }).fail(function () {
+            setButtonLoading($button, false);
+            alert(i18n.ajax_error);
+        });
+    });
+
+    // Review notice dismiss handler
+    $(document).on('click', '.tbfw-review-dismiss-link', function (e) {
+        e.preventDefault();
+
+        var $notice = $(this).closest('.tbfw-review-notice');
+        var nonce = $notice.data('nonce');
+        var action = $(this).data('action');
+
+        $.post(ajaxUrl, {
+            action: 'tbfw_dismiss_review_notice',
+            nonce: nonce,
+            dismiss_action: action
+        }, function () {
+            $notice.fadeOut(300, function () {
+                $(this).remove();
+            });
+        });
+    });
+
+    // Also handle the WordPress dismiss button (X)
+    $(document).on('click', '.tbfw-review-notice .notice-dismiss', function () {
+        var $notice = $(this).closest('.tbfw-review-notice');
+        var nonce = $notice.data('nonce');
+
+        $.post(ajaxUrl, {
+            action: 'tbfw_dismiss_review_notice',
+            nonce: nonce,
+            dismiss_action: 'later'
+        });
+    });
+
 });

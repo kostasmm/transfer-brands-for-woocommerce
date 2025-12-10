@@ -40,7 +40,7 @@ class TBFW_Transfer_Brands_Core {
      * @since 2.3.0
      * @var int
      */
-    private $batch_size = 20;
+    private $batch_size = 10;
     
     /**
      * Admin class instance
@@ -121,7 +121,7 @@ class TBFW_Transfer_Brands_Core {
         // Load options
         $this->options = get_option('tbfw_transfer_brands_options', [
             'source_taxonomy' => 'pa_brand',
-            'batch_size' => 20,
+            'batch_size' => 10,
             'backup_enabled' => true,
             'debug_mode' => false
         ]);
@@ -130,7 +130,7 @@ class TBFW_Transfer_Brands_Core {
         $this->options['destination_taxonomy'] = $this->get_woocommerce_brand_permalink();
         
         // Set batch size from options
-        $this->batch_size = isset($this->options['batch_size']) ? absint($this->options['batch_size']) : 20;
+        $this->batch_size = isset($this->options['batch_size']) ? absint($this->options['batch_size']) : 10;
         
         // Initialize component classes
         $this->admin = new TBFW_Transfer_Brands_Admin($this);
@@ -150,17 +150,12 @@ class TBFW_Transfer_Brands_Core {
      */
     private function get_woocommerce_brand_permalink() {
         $brand_permalink = get_option('woocommerce_brand_permalink', 'product_brand');
-        
+
         // If empty, use the default value
         if (empty($brand_permalink)) {
             $brand_permalink = 'product_brand';
         }
-        
-        $this->add_debug("Retrieved WooCommerce brand permalink", [
-            'permalink' => $brand_permalink,
-            'source' => 'woocommerce_brand_permalink option'
-        ]);
-        
+
         return $brand_permalink;
     }
     

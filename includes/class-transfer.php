@@ -161,11 +161,11 @@ class TBFW_Transfer_Brands_Transfer {
                     {$exclude_condition}
                     LIMIT %d";
 
-            $product_ids = $wpdb->get_col(
-                $wpdb->prepare($query, $query_args)
-            );
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Query is built dynamically with proper placeholders and $wpdb->prepare() handles escaping
+            $product_ids = $wpdb->get_col($wpdb->prepare($query, $query_args));
 
             // Count total products for progress calculation
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
             $total = $wpdb->get_var(
                 $wpdb->prepare(
                     "SELECT COUNT(DISTINCT post_id)
@@ -186,7 +186,10 @@ class TBFW_Transfer_Brands_Transfer {
         // If there are no more products to process, we complete
         if (empty($product_ids)) {
             $this->core->get_backup()->update_completion_timestamp();
-            
+
+            // Mark transfer as completed for review notice
+            update_option('tbfw_transfer_completed', true, false);
+
             return [
                 'success' => true,
                 'step' => 'done',
@@ -666,21 +669,23 @@ class TBFW_Transfer_Brands_Transfer {
         }
         
         // If that fails, try a direct database query
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- No WP function to query attachments by guid
         $attachment_id = $wpdb->get_var(
             $wpdb->prepare(
                 "SELECT ID FROM {$wpdb->posts} WHERE guid = %s AND post_type = 'attachment'",
                 $url
             )
         );
-        
+
         if ($attachment_id) {
             return (int)$attachment_id;
         }
-        
+
         // Try without protocol and www
-        $url_parts = parse_url($url);
+        $url_parts = wp_parse_url($url);
         if (isset($url_parts['path'])) {
             $path = $url_parts['path'];
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- No WP function to query attachments by guid
             $attachment_id = $wpdb->get_var(
                 $wpdb->prepare(
                     "SELECT ID FROM {$wpdb->posts} WHERE guid LIKE %s AND post_type = 'attachment'",
@@ -730,6 +735,7 @@ class TBFW_Transfer_Brands_Transfer {
         $query .= " ORDER BY tr.object_id ASC LIMIT %d";
         $query_args[] = $batch_size;
 
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Query is built dynamically with proper placeholders and $wpdb->prepare() handles escaping
         return $wpdb->get_col($wpdb->prepare($query, $query_args));
     }
 
@@ -743,6 +749,7 @@ class TBFW_Transfer_Brands_Transfer {
     private function count_brand_plugin_products($taxonomy) {
         global $wpdb;
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
         return (int) $wpdb->get_var(
             $wpdb->prepare(
                 "SELECT COUNT(DISTINCT tr.object_id)

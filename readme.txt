@@ -1,16 +1,16 @@
 === Transfer Brands for WooCommerce ===
 Contributors: malakontask
-Tags: woocommerce, brands, migration, taxonomy, transfer
+Tags: woocommerce, brands, migration, woocommerce brands, brand migration
 Requires at least: 6.0
 Tested up to: 6.9
-Stable tag: 2.8.7
+Stable tag: 3.0.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 8.0.0
 WC tested up to: 10.3.6
 
-Migrate brand attributes to WooCommerce brand taxonomy with backup, image transfer, and progress tracking.
+Official WooCommerce 9.6 brand migration tool. Transfer from Perfect Brands, YITH, or custom attributes with backup and image support.
 
 == Description ==
 
@@ -108,6 +108,18 @@ Currently, the plugin transfers one attribute at a time. You can run multiple tr
 
 Enable debug mode in the plugin settings to access detailed logs, which can help identify and resolve issues.
 
+= Can I migrate from Perfect Brands for WooCommerce? =
+
+Yes! Transfer Brands fully supports migrating from Perfect Brands for WooCommerce (pwb-brand taxonomy). Simply select "Perfect Brands" from the source dropdown and your brands, including images, will be transferred to WooCommerce's built-in Brands taxonomy.
+
+= Can I migrate from YITH WooCommerce Brands? =
+
+Yes! The plugin supports YITH WooCommerce Brands (yith_product_brand taxonomy). Select it as your source and transfer all your brand data to WooCommerce Brands with one click.
+
+= What happens to my Perfect Brands or YITH data after migration? =
+
+Your original data remains untouched until you explicitly choose to delete it. The plugin creates a full backup before any transfer, and you can rollback at any time if needed.
+
 == Screenshots ==
 
 1. Main transfer interface
@@ -117,6 +129,19 @@ Enable debug mode in the plugin settings to access detailed logs, which can help
 5. Debug and troubleshooting tools
 
 == Changelog ==
+
+= 3.0.0 =
+* **Major UX Enhancement**: Smart detection banner automatically detects installed brand plugins
+* Added: One-click source switching when alternative brand taxonomy detected
+* Added: Smart default selection on activation (detects Perfect Brands, YITH Brands)
+* Added: Button loading states with spinners to prevent double-clicks
+* Added: Keyboard accessibility for modals (Escape to close, focus trap)
+* Added: ARIA labels for screen reader accessibility
+* Fixed: **CRITICAL** - Delete Old Brands now works correctly for brand plugin taxonomies
+* Fixed: Backup system now correctly checks if backups are enabled
+* Improved: Debug mode only logs during user-initiated operations
+* Improved: Batch size defaults optimized for shared hosting (default: 10, max: 50)
+* Improved: i18n compliance with proper translators comments for all placeholders
 
 = 2.8.7 =
 * Fixed: Removed UTF-8 BOM that caused "3 characters of unexpected output" warning during activation
@@ -252,6 +277,9 @@ Enable debug mode in the plugin settings to access detailed logs, which can help
 
 == Upgrade Notice ==
 
+= 3.0.0 =
+Major UX update! Smart brand plugin detection, one-click source switching, improved accessibility, and critical fix for Delete Old Brands with brand plugins.
+
 = 2.8.5 =
 **New**: Now supports Perfect Brands for WooCommerce and YITH WooCommerce Brands! If you're using these popular brand plugins and want to migrate to WooCommerce's built-in Brands, this update makes it possible. Simply select your brand plugin's taxonomy from the dropdown and transfer.
 
@@ -265,7 +293,7 @@ Important fix for users experiencing brands not appearing after transfer or 404 
 Minor update to comply with WordPress.org plugin guidelines. No functional changes.
 
 = 2.8.0 =
-**IMPORTANT UPDATE**: Full theme compatibility added! This version ensures brand images transfer correctly regardless of which theme you're using. Supports Woodmart, Porto, Flatsome, and 30+ other popular themes. If your brand images weren't transferring before, this update will fix that issue.
+Full theme compatibility! Brand images now transfer correctly with Woodmart, Porto, Flatsome, and 30+ other themes. Fixes brand images not transferring.
 
 = 2.7.0 =
 Critical update for WooCommerce 10.0.4 compatibility. Fixes brand image transfer issues and adds full support for WordPress 6.8.2. This update is required for proper brand migration with the latest WooCommerce version.

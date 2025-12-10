@@ -4,9 +4,9 @@ This document provides detailed instructions for installing and setting up the T
 
 ## System Requirements
 
-- WordPress 5.6 or higher
-- PHP 7.2 or higher
-- WooCommerce 5.0 or higher
+- WordPress 6.0 or higher
+- PHP 7.4 or higher
+- WooCommerce 8.0 or higher
 - MySQL 5.6 or higher / MariaDB 10.0 or higher
 
 ## Installation Methods
@@ -57,8 +57,8 @@ The plugin now automatically uses the brand permalink setting from WooCommerce:
 
 ## Initial Configuration Recommendations
 
-- Start with a smaller batch size (20-30) and increase if your server can handle larger batches
-- Always run the "Analyze Brands" function before initiating a transfer
+- The default batch size (10) is optimized for shared hosting; increase only if your server can handle larger batches
+- Always run the "Analyze Brands" or "Preview Transfer" function before initiating a transfer
 - Consider testing on a staging site before running on a production store
 - Ensure you have a recent database backup before performing a full transfer
 - For large stores (1000+ products), ensure your PHP memory limit is at least 256MB
@@ -117,3 +117,27 @@ In version 2.6.0, we've made significant changes to comply with WordPress.org gu
 - The plugin now explicitly declares its dependency on WooCommerce
 
 If you're upgrading from a previous version, the plugin will automatically migrate your existing settings and data to the new format.
+
+## Version 3.0.0 Notes
+
+### Major UX Improvements
+Version 3.0.0 brings significant user experience enhancements:
+
+- **Smart Detection**: The plugin now automatically detects if you have Perfect Brands or YITH WooCommerce Brands installed and shows relevant guidance
+- **One-Click Switching**: Quickly switch between brand sources without navigating to settings
+- **Preview Transfer**: See exactly what will happen before starting a transfer
+- **Better Accessibility**: Full keyboard navigation and screen reader support
+
+### For Users of Perfect Brands or YITH Brands
+If you're migrating from Perfect Brands for WooCommerce or YITH WooCommerce Brands:
+
+1. The plugin will automatically detect your existing brand taxonomy
+2. A smart banner will guide you to select the correct source
+3. Use the "Switch to [Plugin Name]" button to quickly set the correct source
+4. All your brands and images will transfer to WooCommerce's built-in Brands
+
+### Upgrade Instructions
+1. Back up your database before upgrading
+2. After upgrading, the plugin may show a smart banner if it detects alternative brand sources
+3. The default batch size has been reduced to 10 for better shared hosting compatibility
+4. If you were using a higher batch size, you may want to adjust it in Settings

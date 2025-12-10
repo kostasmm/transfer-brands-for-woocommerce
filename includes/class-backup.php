@@ -73,11 +73,16 @@ class TBFW_Transfer_Brands_Backup {
     
     /**
      * Store a mapping between old and new term IDs
-     * 
+     *
      * @param int $old_id Original term ID
      * @param int $new_id New term ID
      */
     public function add_term_mapping($old_id, $new_id) {
+        // Skip if backup is disabled
+        if (!$this->core->get_option('backup_enabled')) {
+            return;
+        }
+
         $mappings = get_option('tbfw_term_mappings', []);
         $mappings[$old_id] = $new_id;
         update_option('tbfw_term_mappings', $mappings);
@@ -85,12 +90,17 @@ class TBFW_Transfer_Brands_Backup {
     
     /**
      * Backup a product's current terms
-     * 
+     *
      * @param int $product_id Product ID
      */
     public function backup_product_terms($product_id) {
+        // Skip if backup is disabled
+        if (!$this->core->get_option('backup_enabled')) {
+            return;
+        }
+
         $backup = get_option('tbfw_backup', []);
-        
+
         if (!isset($backup['products'][$product_id])) {
             $terms = wp_get_object_terms($product_id, $this->core->get_option('destination_taxonomy'), ['fields' => 'ids']);
             $backup['products'][$product_id] = $terms;
@@ -102,6 +112,11 @@ class TBFW_Transfer_Brands_Backup {
      * Update completion timestamp
      */
     public function update_completion_timestamp() {
+        // Skip if backup is disabled
+        if (!$this->core->get_option('backup_enabled')) {
+            return;
+        }
+
         $backup = get_option('tbfw_backup', []);
         $backup['completed'] = current_time('mysql');
         update_option('tbfw_backup', $backup);
@@ -151,24 +166,25 @@ class TBFW_Transfer_Brands_Backup {
     
     /**
      * Rollback deleted brands
-     * 
+     *
+     * @since 2.8.8 Added support for brand plugin taxonomies
      * @return array Result data
      */
     public function rollback_deleted_brands() {
         $deleted_backup = get_option('tbfw_deleted_brands_backup', []);
-        
+
         if (empty($deleted_backup)) {
             return [
                 'success' => false,
                 'message' => 'Backup for deleted brands not found.'
             ];
         }
-        
+
         // Count for reporting
         $restored_count = 0;
         $skipped_count = 0;
         $total_in_backup = count($deleted_backup);
-        
+
         // Iterate through each product in the backup
         foreach ($deleted_backup as $product_id => $backup_data) {
             // Get product
@@ -177,49 +193,40 @@ class TBFW_Transfer_Brands_Backup {
                 $skipped_count++;
                 continue;
             }
-            
-            // Process the restoration - we need to modify the product attributes directly
+
+            // Process the restoration
             $this->core->add_debug("Attempting to restore product attributes", [
                 'product_id' => $product_id,
                 'backup_data' => $backup_data
             ]);
-            
+
             try {
-                // Get current product attributes
-                $current_attributes = get_post_meta($product_id, '_product_attributes', true);
-                if (!is_array($current_attributes)) {
-                    $current_attributes = [];
-                }
-                
                 // Get the attribute info from backup
                 $taxonomy_name = $backup_data['attribute_taxonomy'];
+                $is_brand_plugin = isset($backup_data['is_brand_plugin']) ? (bool)$backup_data['is_brand_plugin'] : false;
                 $is_taxonomy = isset($backup_data['is_taxonomy']) ? (bool)$backup_data['is_taxonomy'] : true;
-                $options = $backup_data['options'];
                 $brand_names = $backup_data['brand_names'] ?? [];
-                
-                // Skip if this attribute already exists
-                if (isset($current_attributes[$taxonomy_name])) {
-                    $skipped_count++;
-                    continue;
-                }
-                
-                // Recreate the attribute array in the format WooCommerce expects
-                $current_attributes[$taxonomy_name] = [
-                    'name' => $taxonomy_name,
-                    'is_visible' => 1,
-                    'is_variation' => 0,
-                    'is_taxonomy' => $is_taxonomy ? 1 : 0,
-                    'position' => count($current_attributes),
-                ];
-                
-                // For taxonomy attributes we need to link to terms
-                if ($is_taxonomy) {
-                    // First check if the terms exist, create them if not
+
+                // Handle brand plugin taxonomies differently (pwb-brand, yith_product_brand)
+                if ($is_brand_plugin) {
+                    // For brand plugins, check if product already has terms in this taxonomy
+                    $existing_terms = get_the_terms($product_id, $taxonomy_name);
+                    if ($existing_terms && !is_wp_error($existing_terms)) {
+                        $skipped_count++;
+                        $this->core->add_debug("Skipped - product already has brand plugin terms", [
+                            'product_id' => $product_id,
+                            'taxonomy' => $taxonomy_name,
+                            'existing_terms' => wp_list_pluck($existing_terms, 'name')
+                        ]);
+                        continue;
+                    }
+
+                    // Find or create terms and assign to product
                     $term_ids = [];
                     foreach ($brand_names as $brand_name) {
                         $term = get_term_by('name', $brand_name, $taxonomy_name);
                         if (!$term) {
-                            // Create the term
+                            // Create the term if it doesn't exist
                             $result = wp_insert_term($brand_name, $taxonomy_name);
                             if (!is_wp_error($result)) {
                                 $term_ids[] = $result['term_id'];
@@ -228,29 +235,82 @@ class TBFW_Transfer_Brands_Backup {
                             $term_ids[] = $term->term_id;
                         }
                     }
-                    
-                    // Now assign the terms to the product
+
+                    // Assign terms to product
                     if (!empty($term_ids)) {
                         wp_set_object_terms($product_id, $term_ids, $taxonomy_name);
+                        $restored_count++;
+
+                        $this->core->add_debug("Successfully restored brand plugin terms", [
+                            'product_id' => $product_id,
+                            'taxonomy' => $taxonomy_name,
+                            'restored_terms' => $brand_names
+                        ]);
                     }
-                    
-                    // For taxonomy attributes, WooCommerce stores 'value' as empty string
-                    $current_attributes[$taxonomy_name]['value'] = '';
                 } else {
-                    // For custom attributes, value holds the actual data
-                    $current_attributes[$taxonomy_name]['value'] = implode('|', $brand_names);
+                    // For WooCommerce attributes, use the original logic
+                    $current_attributes = get_post_meta($product_id, '_product_attributes', true);
+                    if (!is_array($current_attributes)) {
+                        $current_attributes = [];
+                    }
+
+                    $options = $backup_data['options'];
+
+                    // Skip if this attribute already exists
+                    if (isset($current_attributes[$taxonomy_name])) {
+                        $skipped_count++;
+                        continue;
+                    }
+
+                    // Recreate the attribute array in the format WooCommerce expects
+                    $current_attributes[$taxonomy_name] = [
+                        'name' => $taxonomy_name,
+                        'is_visible' => 1,
+                        'is_variation' => 0,
+                        'is_taxonomy' => $is_taxonomy ? 1 : 0,
+                        'position' => count($current_attributes),
+                    ];
+
+                    // For taxonomy attributes we need to link to terms
+                    if ($is_taxonomy) {
+                        // First check if the terms exist, create them if not
+                        $term_ids = [];
+                        foreach ($brand_names as $brand_name) {
+                            $term = get_term_by('name', $brand_name, $taxonomy_name);
+                            if (!$term) {
+                                // Create the term
+                                $result = wp_insert_term($brand_name, $taxonomy_name);
+                                if (!is_wp_error($result)) {
+                                    $term_ids[] = $result['term_id'];
+                                }
+                            } else {
+                                $term_ids[] = $term->term_id;
+                            }
+                        }
+
+                        // Now assign the terms to the product
+                        if (!empty($term_ids)) {
+                            wp_set_object_terms($product_id, $term_ids, $taxonomy_name);
+                        }
+
+                        // For taxonomy attributes, WooCommerce stores 'value' as empty string
+                        $current_attributes[$taxonomy_name]['value'] = '';
+                    } else {
+                        // For custom attributes, value holds the actual data
+                        $current_attributes[$taxonomy_name]['value'] = implode('|', $brand_names);
+                    }
+
+                    // Update the product's attributes
+                    update_post_meta($product_id, '_product_attributes', $current_attributes);
+
+                    $restored_count++;
+
+                    $this->core->add_debug("Successfully restored brand attribute", [
+                        'product_id' => $product_id,
+                        'attribute' => $current_attributes[$taxonomy_name]
+                    ]);
                 }
-                
-                // Update the product's attributes
-                update_post_meta($product_id, '_product_attributes', $current_attributes);
-                
-                $restored_count++;
-                
-                $this->core->add_debug("Successfully restored brand attribute", [
-                    'product_id' => $product_id,
-                    'attribute' => $current_attributes[$taxonomy_name]
-                ]);
-                
+
             } catch (Exception $e) {
                 $this->core->add_debug("Error restoring brand attribute", [
                     'product_id' => $product_id,
@@ -258,10 +318,10 @@ class TBFW_Transfer_Brands_Backup {
                 ]);
             }
         }
-        
+
         // Delete the backup after successful restore
         delete_option('tbfw_deleted_brands_backup');
-        
+
         // Return success response with detailed information
         return [
             'success' => true,
@@ -332,7 +392,57 @@ class TBFW_Transfer_Brands_Backup {
             ]);
         }
     }
-    
+
+    /**
+     * Backup brand plugin taxonomy terms before deletion
+     *
+     * @since 2.8.8
+     * @param int $product_id Product ID
+     * @param array $terms Array of WP_Term objects
+     * @param string $taxonomy The taxonomy name (e.g., pwb-brand, yith_product_brand)
+     */
+    public function backup_brand_plugin_terms($product_id, $terms, $taxonomy) {
+        $backup_key = 'tbfw_deleted_brands_backup';
+        $backup = get_option($backup_key, []);
+
+        // Only backup if we haven't already
+        if (!isset($backup[$product_id])) {
+            // Get term names and IDs for restoration
+            $term_data = [];
+            foreach ($terms as $term) {
+                $term_data[] = [
+                    'term_id' => $term->term_id,
+                    'name' => $term->name,
+                    'slug' => $term->slug,
+                    'description' => $term->description
+                ];
+            }
+
+            // Create a comprehensive backup
+            $backup[$product_id] = [
+                'timestamp' => current_time('mysql'),
+                'product_id' => $product_id,
+                'attribute_taxonomy' => $taxonomy,
+                'is_taxonomy' => true,
+                'is_brand_plugin' => true,
+                'is_visible' => true,
+                'is_variation' => false,
+                'position' => 0,
+                'options' => wp_list_pluck($terms, 'term_id'),
+                'brand_names' => wp_list_pluck($terms, 'name'),
+                'term_data' => $term_data
+            ];
+
+            update_option($backup_key, $backup);
+
+            $this->core->add_debug("Created backup for brand plugin terms", [
+                'product_id' => $product_id,
+                'taxonomy' => $taxonomy,
+                'terms' => wp_list_pluck($terms, 'name')
+            ]);
+        }
+    }
+
     /**
      * Clean up all backups
      * 

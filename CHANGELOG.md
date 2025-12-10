@@ -5,6 +5,37 @@ All notable changes to Transfer Brands for WooCommerce will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2025-12-10
+
+### Added
+- **Smart Detection Banner**: Automatically detects installed brand plugins (Perfect Brands, YITH) and shows contextual guidance
+- **One-Click Source Switching**: Switch between brand taxonomies without visiting settings
+- **Smart Default Selection**: On activation, automatically selects the best source taxonomy based on detected plugins
+- **Button Loading States**: All action buttons now show spinners to prevent double-clicks
+- **Keyboard Accessibility**: Modals can be closed with Escape key, includes focus trap
+- **ARIA Labels**: Added proper accessibility labels for screen readers
+- **Review Request Notice**: Non-intrusive review prompt shown after successful transfer
+- **New FAQs**: Added competitor-focused FAQs for Perfect Brands and YITH migration
+
+### Fixed
+- **CRITICAL**: Delete Old Brands now works correctly for brand plugin taxonomies (pwb-brand, yith_product_brand)
+- **Backup System**: Fixed wrong option name and added missing backup_enabled checks in 3 methods
+- **Debug Log Clear**: Created missing `clear-debug-log.js` file for clearing debug logs
+
+### Improved
+- **Debug Mode**: Only logs during user-initiated operations, not on page load
+- **Batch Size**: Default reduced from 20 to 10, maximum from 100 to 50 for better shared hosting support
+- **i18n Compliance**: Added proper translators comments for all placeholder strings
+- **SEO Optimization**: Updated short description and tags for better WordPress.org discoverability
+
+### Technical
+- Added `backup_brand_plugin_terms()` method for brand plugin backups
+- Updated `rollback_deleted_brands()` to handle `is_brand_plugin` flag
+- Added `ajax_switch_source()` AJAX handler
+- Added `ajax_dismiss_review_notice()` AJAX handler
+- Added `maybe_show_review_notice()` admin notice method
+- New CSS: Smart banner styles, review notice styles, button loading states
+
 ## [2.8.1] - 2025-08-09
 
 ### Changed

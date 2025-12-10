@@ -39,7 +39,89 @@ class TBFW_Transfer_Brands_Ajax {
         
         // New AJAX handler for refreshing the destination taxonomy
         add_action('wp_ajax_tbfw_refresh_destination_taxonomy', [$this, 'ajax_refresh_destination_taxonomy']);
+        
+        // Preview transfer handler
+        add_action('wp_ajax_tbfw_preview_transfer', [$this, 'ajax_preview_transfer']);
+
+        // Quick source switch handler
+        add_action('wp_ajax_tbfw_switch_source', [$this, 'ajax_switch_source']);
+
+        // Review notice dismiss handler
+        add_action('wp_ajax_tbfw_dismiss_review_notice', [$this, 'ajax_dismiss_review_notice']);
     }
+    /**
+     * Get user-friendly error message
+     *
+     * @since 2.9.0
+     * @param string $technical_message Technical error message
+     * @return array Array with 'message' and optional 'hint'
+     */
+    private function get_friendly_error($technical_message) {
+        $friendly_errors = [
+            'taxonomy_not_found' => [
+                'message' => __('The brand taxonomy could not be found.', 'transfer-brands-for-woocommerce'),
+                'hint' => __('Please check that WooCommerce Brands is activated.', 'transfer-brands-for-woocommerce')
+            ],
+            'invalid_taxonomy' => [
+                'message' => __('The selected taxonomy is not valid.', 'transfer-brands-for-woocommerce'),
+                'hint' => __('Go to Settings tab and verify your source/destination taxonomy settings.', 'transfer-brands-for-woocommerce')
+            ],
+            'term_exists' => [
+                'message' => __('Some brands already exist in the destination.', 'transfer-brands-for-woocommerce'),
+                'hint' => __('Existing brands will be reused automatically.', 'transfer-brands-for-woocommerce')
+            ],
+            'permission_denied' => [
+                'message' => __('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'),
+                'hint' => __('Please contact your site administrator.', 'transfer-brands-for-woocommerce')
+            ],
+            'no_products' => [
+                'message' => __('No products found with the source brand attribute.', 'transfer-brands-for-woocommerce'),
+                'hint' => __('Verify your source taxonomy setting matches your product attributes.', 'transfer-brands-for-woocommerce')
+            ],
+            'backup_failed' => [
+                'message' => __('Could not create backup before transfer.', 'transfer-brands-for-woocommerce'),
+                'hint' => __('Check your database permissions or try disabling backup in Settings.', 'transfer-brands-for-woocommerce')
+            ],
+        ];
+
+        // Check for matches in technical message
+        foreach ($friendly_errors as $key => $error) {
+            if (stripos($technical_message, str_replace('_', ' ', $key)) !== false ||
+                stripos($technical_message, $key) !== false) {
+                return $error;
+            }
+        }
+
+        // Return original message if no match found
+        return [
+            'message' => $technical_message,
+            'hint' => ''
+        ];
+    }
+
+    /**
+     * Format error response with optional debug info
+     *
+     * @since 2.9.0
+     * @param string $technical_message Technical error message
+     * @return string Formatted error message
+     */
+    private function format_error_message($technical_message) {
+        $friendly = $this->get_friendly_error($technical_message);
+        $message = $friendly['message'];
+
+        if (!empty($friendly['hint'])) {
+            $message .= ' ' . $friendly['hint'];
+        }
+
+        // Add technical details only in debug mode
+        if ($this->core->get_option('debug_mode') && $message !== $technical_message) {
+            $message .= ' [' . $technical_message . ']';
+        }
+
+        return $message;
+    }
+
     
     /**
      * AJAX handler for processing the transfer in steps
@@ -48,10 +130,10 @@ class TBFW_Transfer_Brands_Ajax {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
 
         if (!current_user_can('manage_woocommerce')) {
-            wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
+            wp_die(esc_html__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
 
-        $step = isset($_POST['step']) ? sanitize_text_field($_POST['step']) : 'backup';
+        $step = isset($_POST['step']) ? sanitize_text_field(wp_unslash($_POST['step'])) : 'backup';
         $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
 
         // Pre-transfer validation: Check if WooCommerce Brands is enabled
@@ -140,7 +222,7 @@ class TBFW_Transfer_Brands_Ajax {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
 
         if (!current_user_can('manage_woocommerce')) {
-            wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
+            wp_die(esc_html__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
 
         $source_taxonomy = $this->core->get_option('source_taxonomy');
@@ -152,7 +234,7 @@ class TBFW_Transfer_Brands_Ajax {
         ]);
 
         if (is_wp_error($source_terms)) {
-            wp_send_json_error(['message' => 'Error: ' . $source_terms->get_error_message()]);
+            wp_send_json_error(['message' => $this->format_error_message($source_terms->get_error_message())]);
             return;
         }
 
@@ -165,6 +247,7 @@ class TBFW_Transfer_Brands_Ajax {
         // For brand plugin taxonomies, skip custom attribute checks (they don't use _product_attributes)
         if (!$is_brand_plugin) {
             // Get info about custom attributes (only for WooCommerce attributes)
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
             $custom_attribute_count = $wpdb->get_var(
                 $wpdb->prepare(
                     "SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta}
@@ -178,6 +261,7 @@ class TBFW_Transfer_Brands_Ajax {
             );
 
             // Sample of products with custom attributes
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
             $custom_products = $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT post_id, meta_value FROM {$wpdb->postmeta}
@@ -448,7 +532,7 @@ class TBFW_Transfer_Brands_Ajax {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
         
         if (!current_user_can('manage_woocommerce')) {
-            wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
+            wp_die(esc_html__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
         
         $result = $this->core->get_backup()->rollback_transfer();
@@ -468,7 +552,7 @@ class TBFW_Transfer_Brands_Ajax {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
         
         if (!current_user_can('manage_woocommerce')) {
-            wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
+            wp_die(esc_html__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
         
         $result = $this->core->get_backup()->rollback_deleted_brands();
@@ -490,7 +574,7 @@ class TBFW_Transfer_Brands_Ajax {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
         
         if (!current_user_can('manage_woocommerce')) {
-            wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
+            wp_die(esc_html__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
         
         // Make sure we completely remove previous data
@@ -507,80 +591,97 @@ class TBFW_Transfer_Brands_Ajax {
     
     /**
      * AJAX handler for deleting old brands from products
-     * 
+     *
      * This method processes products in batches, removing the old brand attributes
      * while tracking successfully processed products to avoid duplication.
      *
      * @since 2.5.0 Improved to track processed products by ID and ensure complete processing
      * @since 2.6.0 Fixed SQL security issues
+     * @since 2.8.8 Added support for brand plugin taxonomies (pwb-brand, yith_product_brand)
      */
     public function ajax_delete_old_brands() {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
-        
+
         if (!current_user_can('manage_woocommerce')) {
-            wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
+            wp_die(esc_html__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
-        
+
         $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
         $batch_size = $this->core->get_batch_size();
-        
+        $source_taxonomy = $this->core->get_option('source_taxonomy');
+
+        // Check if this is a brand plugin taxonomy (pwb-brand, yith_product_brand) vs WooCommerce attribute
+        $is_brand_plugin = $this->core->get_utils()->is_brand_plugin_taxonomy($source_taxonomy);
+
         global $wpdb;
-        
+
         // Get previously processed product IDs
         $processed_ids = get_option('tbfw_brands_processed_ids', []);
-        
-        // Find products that need processing
-        $query_args = [
-            '%' . $wpdb->esc_like($this->core->get_option('source_taxonomy')) . '%',
-            $batch_size
-        ];
-        
-        $query = "SELECT DISTINCT post_id 
-                 FROM {$wpdb->postmeta} 
-                 WHERE meta_key = '_product_attributes' 
-                 AND meta_value LIKE %s 
-                 AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')";
-        
-        // Add exclusion for already processed products
-        if (!empty($processed_ids)) {
-            $placeholders = implode(',', array_fill(0, count($processed_ids), '%d'));
-            $query .= " AND post_id NOT IN ($placeholders)";
-            $query_args = array_merge([$query_args[0]], $processed_ids, [$query_args[1]]);
+
+        // Different query logic for brand plugin taxonomies vs WooCommerce attributes
+        if ($is_brand_plugin) {
+            // For brand plugin taxonomies, query products via taxonomy relationship
+            $product_ids = $this->get_brand_plugin_products_for_delete($source_taxonomy, $processed_ids, $batch_size);
+            $total = $this->count_brand_plugin_products_for_delete($source_taxonomy);
+            $remaining = $total - count($processed_ids);
+        } else {
+            // For WooCommerce attributes, use the _product_attributes meta query
+            $query_args = [
+                '%' . $wpdb->esc_like($source_taxonomy) . '%',
+                $batch_size
+            ];
+
+            $query = "SELECT DISTINCT post_id
+                     FROM {$wpdb->postmeta}
+                     WHERE meta_key = '_product_attributes'
+                     AND meta_value LIKE %s
+                     AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')";
+
+            // Add exclusion for already processed products
+            if (!empty($processed_ids)) {
+                $placeholders = implode(',', array_fill(0, count($processed_ids), '%d'));
+                $query .= " AND post_id NOT IN ($placeholders)";
+                $query_args = array_merge([$query_args[0]], $processed_ids, [$query_args[1]]);
+            }
+
+            $query .= " ORDER BY post_id ASC LIMIT %d";
+
+            // Get products to process
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Query is built dynamically with proper placeholders and $wpdb->prepare() handles escaping
+            $product_ids = $wpdb->get_col($wpdb->prepare($query, $query_args));
+
+            // Count remaining products for progress
+            $remaining_query = "SELECT COUNT(DISTINCT post_id)
+                               FROM {$wpdb->postmeta}
+                               WHERE meta_key = '_product_attributes'
+                               AND meta_value LIKE %s
+                               AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')";
+
+            $remaining_args = ['%' . $wpdb->esc_like($source_taxonomy) . '%'];
+
+            if (!empty($processed_ids)) {
+                $placeholders = implode(',', array_fill(0, count($processed_ids), '%d'));
+                $remaining_query .= " AND post_id NOT IN ($placeholders)";
+                $remaining_args = array_merge($remaining_args, $processed_ids);
+            }
+
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Query is built dynamically, migration tool requires direct query
+            $remaining = $wpdb->get_var($wpdb->prepare($remaining_query, $remaining_args));
+
+            // Total is remaining plus already processed
+            $total = $remaining + count($processed_ids);
         }
-        
-        $query .= " ORDER BY post_id ASC LIMIT %d";
-        
-        // Get products to process
-        $product_ids = $wpdb->get_col($wpdb->prepare($query, $query_args));
-        
-        // Count remaining products for progress
-        $remaining_query = "SELECT COUNT(DISTINCT post_id) 
-                           FROM {$wpdb->postmeta} 
-                           WHERE meta_key = '_product_attributes' 
-                           AND meta_value LIKE %s
-                           AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')";
-        
-        $remaining_args = ['%' . $wpdb->esc_like($this->core->get_option('source_taxonomy')) . '%'];
-        
-        if (!empty($processed_ids)) {
-            $placeholders = implode(',', array_fill(0, count($processed_ids), '%d'));
-            $remaining_query .= " AND post_id NOT IN ($placeholders)";
-            $remaining_args = array_merge($remaining_args, $processed_ids);
-        }
-        
-        $remaining = $wpdb->get_var($wpdb->prepare($remaining_query, $remaining_args));
-        
-        // Total is remaining plus already processed
-        $total = $remaining + count($processed_ids);
-        
+
         $this->core->add_debug("Deleting old brands batch", [
             'batch_size' => $batch_size,
             'found_products' => count($product_ids),
             'total_remaining' => $remaining,
             'total_processed' => count($processed_ids),
-            'total_products' => $total
+            'total_products' => $total,
+            'is_brand_plugin' => $is_brand_plugin,
+            'source_taxonomy' => $source_taxonomy
         ]);
-        
+
         if (empty($product_ids)) {
             wp_send_json_success([
                 'complete' => true,
@@ -591,72 +692,99 @@ class TBFW_Transfer_Brands_Ajax {
             ]);
             return;
         }
-        
+
         $log_message = '';
         $processed = 0;
         $actual_modified = 0;
-        
+
         // List of successfully processed IDs in this batch
         $newly_processed_ids = [];
-        
+
         // Check if backup is enabled
         $backup_enabled = $this->core->get_option('backup_enabled');
-        
+
         foreach ($product_ids as $product_id) {
             $product = wc_get_product($product_id);
             if (!$product) continue;
-            
+
             $processed++;
-            
-            // Get product attributes
-            $attributes = $product->get_attributes();
-            
-            // Check if the product has the old brand attribute
-            if (isset($attributes[$this->core->get_option('source_taxonomy')])) {
-                // Create backup if enabled
-                if ($backup_enabled) {
-                    $this->core->get_backup()->backup_product_attribute($product_id, $attributes[$this->core->get_option('source_taxonomy')]);
+
+            if ($is_brand_plugin) {
+                // For brand plugin taxonomies, get terms and remove via wp_remove_object_terms
+                $source_terms = get_the_terms($product_id, $source_taxonomy);
+
+                if ($source_terms && !is_wp_error($source_terms)) {
+                    // Create backup if enabled
+                    if ($backup_enabled) {
+                        $this->core->get_backup()->backup_brand_plugin_terms($product_id, $source_terms, $source_taxonomy);
+                    }
+
+                    // Remove all terms of this taxonomy from the product
+                    $term_ids = wp_list_pluck($source_terms, 'term_id');
+                    wp_remove_object_terms($product_id, $term_ids, $source_taxonomy);
+
+                    $actual_modified++;
+
+                    $this->core->add_debug("Deleted brand plugin terms from product", [
+                        'product_id' => $product_id,
+                        'product_name' => $product->get_name(),
+                        'taxonomy' => $source_taxonomy,
+                        'removed_terms' => wp_list_pluck($source_terms, 'name'),
+                        'backup_created' => $backup_enabled
+                    ]);
                 }
-                
-                // Remove the attribute
-                unset($attributes[$this->core->get_option('source_taxonomy')]);
-                
-                // Update the product
-                $product->set_attributes($attributes);
-                $product->save();
-                
-                $actual_modified++;
-                
-                $this->core->add_debug("Deleted old brand from product", [
-                    'product_id' => $product_id,
-                    'product_name' => $product->get_name(),
-                    'backup_created' => $backup_enabled
-                ]);
+            } else {
+                // For WooCommerce attributes, use the original logic
+                $attributes = $product->get_attributes();
+
+                // Check if the product has the old brand attribute
+                if (isset($attributes[$source_taxonomy])) {
+                    // Create backup if enabled
+                    if ($backup_enabled) {
+                        $this->core->get_backup()->backup_product_attribute($product_id, $attributes[$source_taxonomy]);
+                    }
+
+                    // Remove the attribute
+                    unset($attributes[$source_taxonomy]);
+
+                    // Update the product
+                    $product->set_attributes($attributes);
+                    $product->save();
+
+                    $actual_modified++;
+
+                    $this->core->add_debug("Deleted old brand attribute from product", [
+                        'product_id' => $product_id,
+                        'product_name' => $product->get_name(),
+                        'backup_created' => $backup_enabled
+                    ]);
+                }
             }
-            
+
             // Add to processed IDs
             $newly_processed_ids[] = $product_id;
         }
-        
+
         // Update processed IDs
         $processed_ids = array_merge($processed_ids, $newly_processed_ids);
         update_option('tbfw_brands_processed_ids', $processed_ids);
-        
+
         // Calculate progress percentage based on total and processed
         $processed_count = count($processed_ids);
         $percent = min(100, round(($processed_count / max(1, $total)) * 100));
-        
+
         // Detailed log message
-        $log_message = "Removed old brands from {$actual_modified} products in this batch (examined {$processed})";
+        $type_label = $is_brand_plugin ? 'brand terms' : 'brand attributes';
+        $log_message = "Removed old {$type_label} from {$actual_modified} products in this batch (examined {$processed})";
         if ($backup_enabled) {
             $log_message .= " - Backups created";
         } else {
             $log_message .= " - No backups created";
         }
-        
+
         // Check if we're done
         $complete = ($remaining <= count($product_ids));
-        
+
         wp_send_json_success([
             'complete' => $complete,
             'offset' => 0, // No need for offset anymore since we exclude by ID
@@ -670,6 +798,68 @@ class TBFW_Transfer_Brands_Ajax {
             'backup_created' => $backup_enabled
         ]);
     }
+
+    /**
+     * Get products from a brand plugin taxonomy for deletion
+     *
+     * @since 2.8.8
+     * @param string $taxonomy The brand plugin taxonomy (e.g., pwb-brand)
+     * @param array $exclude_ids Product IDs to exclude (already processed)
+     * @param int $batch_size Number of products to return
+     * @return array Array of product IDs
+     */
+    private function get_brand_plugin_products_for_delete($taxonomy, $exclude_ids = [], $batch_size = 50) {
+        global $wpdb;
+
+        // Build query to get products with this taxonomy
+        $query = "SELECT DISTINCT tr.object_id
+                  FROM {$wpdb->term_relationships} tr
+                  INNER JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+                  INNER JOIN {$wpdb->posts} p ON tr.object_id = p.ID
+                  WHERE tt.taxonomy = %s
+                  AND p.post_type = 'product'
+                  AND p.post_status = 'publish'";
+
+        $query_args = [$taxonomy];
+
+        // Exclude already processed products
+        if (!empty($exclude_ids)) {
+            $placeholders = implode(',', array_fill(0, count($exclude_ids), '%d'));
+            $query .= " AND tr.object_id NOT IN ($placeholders)";
+            $query_args = array_merge($query_args, $exclude_ids);
+        }
+
+        $query .= " ORDER BY tr.object_id ASC LIMIT %d";
+        $query_args[] = $batch_size;
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Query is built dynamically with proper placeholders and $wpdb->prepare() handles escaping
+        return $wpdb->get_col($wpdb->prepare($query, $query_args));
+    }
+
+    /**
+     * Count total products with a brand plugin taxonomy for deletion
+     *
+     * @since 2.8.8
+     * @param string $taxonomy The brand plugin taxonomy
+     * @return int Total number of products
+     */
+    private function count_brand_plugin_products_for_delete($taxonomy) {
+        global $wpdb;
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
+        return (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(DISTINCT tr.object_id)
+                FROM {$wpdb->term_relationships} tr
+                INNER JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+                INNER JOIN {$wpdb->posts} p ON tr.object_id = p.ID
+                WHERE tt.taxonomy = %s
+                AND p.post_type = 'product'
+                AND p.post_status = 'publish'",
+                $taxonomy
+            )
+        );
+    }
     
     /**
      * AJAX handler for cleaning up all backups
@@ -678,7 +868,7 @@ class TBFW_Transfer_Brands_Ajax {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
         
         if (!current_user_can('manage_woocommerce')) {
-            wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
+            wp_die(esc_html__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
         
         $result = $this->core->get_backup()->cleanup_backups();
@@ -698,7 +888,7 @@ class TBFW_Transfer_Brands_Ajax {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
         
         if (!current_user_can('manage_woocommerce')) {
-            wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
+            wp_die(esc_html__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
         
         // Delete transients that might affect the counts
@@ -743,10 +933,10 @@ class TBFW_Transfer_Brands_Ajax {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
         
         if (!current_user_can('manage_woocommerce')) {
-            wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
+            wp_die(esc_html__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
         
-        if (isset($_POST['clear']) && $_POST['clear']) {
+        if (isset($_POST['clear']) && sanitize_text_field(wp_unslash($_POST['clear']))) {
             delete_option('tbfw_brands_debug_log');
             wp_send_json_success(['message' => 'Debug log cleared']);
             return;
@@ -763,7 +953,7 @@ class TBFW_Transfer_Brands_Ajax {
         check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
         
         if (!current_user_can('manage_woocommerce')) {
-            wp_die(__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
+            wp_die(esc_html__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
         }
         
         // Refresh the destination taxonomy
@@ -781,4 +971,273 @@ class TBFW_Transfer_Brands_Ajax {
             ]);
         }
     }
+
+    /**
+     * AJAX handler for previewing transfer (dry run)
+     *
+     * Shows what would happen without making any changes
+     *
+     * @since 2.9.0
+     */
+    public function ajax_preview_transfer() {
+        check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die(esc_html__('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce'));
+        }
+
+        $source_taxonomy = $this->core->get_option('source_taxonomy');
+        $destination_taxonomy = $this->core->get_option('destination_taxonomy');
+        $is_brand_plugin = $this->core->get_utils()->is_brand_plugin_taxonomy($source_taxonomy);
+
+        // Get source terms
+        $source_terms = get_terms([
+            'taxonomy' => $source_taxonomy,
+            'hide_empty' => false
+        ]);
+
+        if (is_wp_error($source_terms)) {
+            wp_send_json_error(['message' => $this->format_error_message($source_terms->get_error_message())]);
+            return;
+        }
+
+        // Analyze what would happen
+        $brands_to_create = 0;
+        $brands_existing = 0;
+        $brands_with_images = 0;
+        $existing_brand_names = [];
+        $new_brand_names = [];
+
+        foreach ($source_terms as $term) {
+            $exists = term_exists($term->name, $destination_taxonomy);
+            if ($exists) {
+                $brands_existing++;
+                $existing_brand_names[] = $term->name;
+            } else {
+                $brands_to_create++;
+                $new_brand_names[] = $term->name;
+            }
+
+            // Check for image
+            $transfer_instance = $this->core->get_transfer();
+            $reflection = new ReflectionClass($transfer_instance);
+            $method = $reflection->getMethod('find_brand_image');
+            $method->setAccessible(true);
+            $image_id = $method->invoke($transfer_instance, $term->term_id);
+            if ($image_id) {
+                $brands_with_images++;
+            }
+        }
+
+        // Count products that would be affected
+        $products_to_update = $this->core->get_utils()->count_products_with_source();
+
+        // Check for potential issues
+        $issues = [];
+
+        // Check for products with multiple brands
+        global $wpdb;
+        if ($is_brand_plugin) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
+            $multi_brand_count = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM (
+                    SELECT object_id, COUNT(*) as brand_count
+                    FROM {$wpdb->term_relationships} tr
+                    JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+                    WHERE tt.taxonomy = %s
+                    GROUP BY object_id
+                    HAVING brand_count > 1
+                ) AS multi",
+                $source_taxonomy
+            ));
+        } else {
+            $multi_brand_count = 0; // For attributes, this is handled differently
+        }
+
+        if ($multi_brand_count > 0) {
+            $issues[] = [
+                'type' => 'warning',
+                'message' => sprintf(
+                    /* translators: %d: Number of products with multiple brands */
+                    __('%d products have multiple brands assigned', 'transfer-brands-for-woocommerce'),
+                    $multi_brand_count
+                )
+            ];
+        }
+
+        // Check WooCommerce Brands status
+        $brands_status = $this->core->get_utils()->check_woocommerce_brands_status();
+        if (!$brands_status['enabled']) {
+            $issues[] = [
+                'type' => 'error',
+                'message' => $brands_status['message']
+            ];
+        }
+
+        // Build HTML response
+        $html = '<div class="tbfw-preview-summary">';
+
+        // Brands to create
+        $html .= '<div class="tbfw-preview-item success">';
+        $html .= '<div class="tbfw-preview-item-value">' . esc_html($brands_to_create) . '</div>';
+        $html .= '<div class="tbfw-preview-item-label">' . esc_html__('Brands to Create', 'transfer-brands-for-woocommerce') . '</div>';
+        $html .= '</div>';
+
+        // Brands existing
+        $html .= '<div class="tbfw-preview-item info">';
+        $html .= '<div class="tbfw-preview-item-value">' . esc_html($brands_existing) . '</div>';
+        $html .= '<div class="tbfw-preview-item-label">' . esc_html__('Will Be Reused', 'transfer-brands-for-woocommerce') . '</div>';
+        $html .= '</div>';
+
+        // Products to update
+        $html .= '<div class="tbfw-preview-item success">';
+        $html .= '<div class="tbfw-preview-item-value">' . esc_html($products_to_update) . '</div>';
+        $html .= '<div class="tbfw-preview-item-label">' . esc_html__('Products to Update', 'transfer-brands-for-woocommerce') . '</div>';
+        $html .= '</div>';
+
+        // Images to transfer
+        $html .= '<div class="tbfw-preview-item info">';
+        $html .= '<div class="tbfw-preview-item-value">' . esc_html($brands_with_images) . '</div>';
+        $html .= '<div class="tbfw-preview-item-label">' . esc_html__('Brand Images', 'transfer-brands-for-woocommerce') . '</div>';
+        $html .= '</div>';
+
+        $html .= '</div>'; // .tbfw-preview-summary
+
+        // Show issues if any
+        if (!empty($issues)) {
+            $html .= '<div class="notice notice-warning inline" style="margin: 15px 0;">';
+            $html .= '<p><strong>' . esc_html__('Potential Issues:', 'transfer-brands-for-woocommerce') . '</strong></p>';
+            $html .= '<ul style="margin-left: 20px; list-style-type: disc;">';
+            foreach ($issues as $issue) {
+                $html .= '<li>' . esc_html($issue['message']) . '</li>';
+            }
+            $html .= '</ul>';
+            $html .= '</div>';
+        }
+
+        // Details section
+        $html .= '<details class="tbfw-preview-details">';
+        $html .= '<summary>' . esc_html__('View Brand Details', 'transfer-brands-for-woocommerce') . '</summary>';
+
+        if (!empty($new_brand_names)) {
+            $html .= '<p><strong>' . esc_html__('Brands to be created:', 'transfer-brands-for-woocommerce') . '</strong></p>';
+            $html .= '<ul class="tbfw-preview-list">';
+            $display_brands = array_slice($new_brand_names, 0, 10);
+            foreach ($display_brands as $name) {
+                $html .= '<li>' . esc_html($name) . '</li>';
+            }
+            if (count($new_brand_names) > 10) {
+                $html .= '<li><em>' . sprintf(
+                    /* translators: %d: Number of additional items not shown */
+                    esc_html__('...and %d more', 'transfer-brands-for-woocommerce'),
+                    count($new_brand_names) - 10
+                ) . '</em></li>';
+            }
+            $html .= '</ul>';
+        }
+
+        if (!empty($existing_brand_names)) {
+            $html .= '<p><strong>' . esc_html__('Existing brands (will be reused):', 'transfer-brands-for-woocommerce') . '</strong></p>';
+            $html .= '<ul class="tbfw-preview-list">';
+            $display_existing = array_slice($existing_brand_names, 0, 10);
+            foreach ($display_existing as $name) {
+                $html .= '<li>' . esc_html($name) . '</li>';
+            }
+            if (count($existing_brand_names) > 10) {
+                $html .= '<li><em>' . sprintf(
+                    /* translators: %d: Number of additional items not shown */
+                    esc_html__('...and %d more', 'transfer-brands-for-woocommerce'),
+                    count($existing_brand_names) - 10
+                ) . '</em></li>';
+            }
+            $html .= '</ul>';
+        }
+
+        $html .= '</details>';
+
+        wp_send_json_success([
+            'html' => $html,
+            'summary' => [
+                'brands_to_create' => $brands_to_create,
+                'brands_existing' => $brands_existing,
+                'products_to_update' => $products_to_update,
+                'brands_with_images' => $brands_with_images,
+                'has_issues' => !empty($issues)
+            ]
+        ]);
+    }
+
+
+    /**
+     * Switch source taxonomy via AJAX
+     * 
+     * @since 2.9.0
+     */
+    public function ajax_switch_source() {
+        check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => __('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce')]);
+            return;
+        }
+
+        $new_taxonomy = isset($_POST['taxonomy']) ? sanitize_text_field(wp_unslash($_POST['taxonomy'])) : '';
+
+        if (empty($new_taxonomy)) {
+            wp_send_json_error(['message' => __('Invalid taxonomy specified.', 'transfer-brands-for-woocommerce')]);
+            return;
+        }
+
+        // Validate the taxonomy exists
+        if (!taxonomy_exists($new_taxonomy)) {
+            wp_send_json_error(['message' => __('The specified taxonomy does not exist.', 'transfer-brands-for-woocommerce')]);
+            return;
+        }
+
+        // Get current options and update source_taxonomy
+        $options = get_option('tbfw_transfer_brands_options', []);
+        $options['source_taxonomy'] = $new_taxonomy;
+        update_option('tbfw_transfer_brands_options', $options);
+
+        // Log the change
+        $this->core->add_debug('Source taxonomy switched', [
+            'new_taxonomy' => $new_taxonomy
+        ]);
+
+        wp_send_json_success([
+            'message' => sprintf(
+                /* translators: %s: Taxonomy name */
+                __('Source changed to %s. Page will reload.', 'transfer-brands-for-woocommerce'),
+                $new_taxonomy
+            ),
+            'taxonomy' => $new_taxonomy
+        ]);
+    }
+
+    /**
+     * AJAX handler for dismissing the review notice
+     *
+     * @since 3.0.0
+     */
+    public function ajax_dismiss_review_notice() {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'tbfw_dismiss_review')) {
+            wp_send_json_error(['message' => __('Security check failed.', 'transfer-brands-for-woocommerce')]);
+            return;
+        }
+
+        $action = isset($_POST['dismiss_action']) ? sanitize_text_field(wp_unslash($_POST['dismiss_action'])) : 'later';
+        $user_id = get_current_user_id();
+
+        if ($action === 'never') {
+            // Permanently dismiss
+            update_user_meta($user_id, 'tbfw_review_notice_dismissed', 'permanent');
+        } else {
+            // Dismiss for 7 days
+            update_user_meta($user_id, 'tbfw_review_notice_dismissed', time() + (7 * DAY_IN_SECONDS));
+        }
+
+        wp_send_json_success(['message' => __('Notice dismissed.', 'transfer-brands-for-woocommerce')]);
+    }
+
 }

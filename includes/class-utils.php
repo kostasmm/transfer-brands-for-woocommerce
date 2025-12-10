@@ -68,6 +68,7 @@ class TBFW_Transfer_Brands_Utils {
         // Check if this is a brand plugin taxonomy (not a WooCommerce attribute)
         if ($this->is_brand_plugin_taxonomy($source_taxonomy)) {
             // For brand plugin taxonomies, count products using the taxonomy relationship
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
             $count = $wpdb->get_var(
                 $wpdb->prepare(
                     "SELECT COUNT(DISTINCT tr.object_id)
@@ -82,6 +83,7 @@ class TBFW_Transfer_Brands_Utils {
             );
         } else {
             // For WooCommerce attributes, use the _product_attributes meta query
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
             $count = $wpdb->get_var(
                 $wpdb->prepare(
                     "SELECT COUNT(DISTINCT post_id)
@@ -93,13 +95,6 @@ class TBFW_Transfer_Brands_Utils {
                 )
             );
         }
-
-        // Log debug info
-        $this->core->add_debug("Product count for {$source_taxonomy}: {$count}", [
-            'source_taxonomy' => $source_taxonomy,
-            'is_brand_plugin' => $this->is_brand_plugin_taxonomy($source_taxonomy),
-            'count' => $count
-        ]);
 
         return $count;
     }
@@ -145,7 +140,8 @@ class TBFW_Transfer_Brands_Utils {
      */
     public function get_custom_brand_products($limit = 10) {
         global $wpdb;
-        
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
         $products = $wpdb->get_results(
             $wpdb->prepare(
                 "SELECT post_id, meta_value FROM {$wpdb->postmeta} 
@@ -327,8 +323,8 @@ class TBFW_Transfer_Brands_Utils {
         $taxonomy_exists = taxonomy_exists($destination_taxonomy);
 
         $result['details'][] = sprintf(
-            /* translators: %s: Taxonomy name */
-            __('Destination taxonomy "%s": %s', 'transfer-brands-for-woocommerce'),
+            /* translators: %1$s: Taxonomy name, %2$s: Registration status */
+            __('Destination taxonomy "%1$s": %2$s', 'transfer-brands-for-woocommerce'),
             $destination_taxonomy,
             $taxonomy_exists ? __('Registered', 'transfer-brands-for-woocommerce') : __('Not registered', 'transfer-brands-for-woocommerce')
         );
@@ -347,6 +343,7 @@ class TBFW_Transfer_Brands_Utils {
         }
 
         $result['details'][] = sprintf(
+            /* translators: %s: Feature status (Enabled/Disabled) */
             __('WooCommerce Brands feature flag: %s', 'transfer-brands-for-woocommerce'),
             $brands_feature_enabled === 'yes' ? __('Enabled', 'transfer-brands-for-woocommerce') : __('Disabled', 'transfer-brands-for-woocommerce')
         );
@@ -362,6 +359,7 @@ class TBFW_Transfer_Brands_Utils {
         }
 
         $result['details'][] = sprintf(
+            /* translators: %s: Availability status (Available/Not available) */
             __('Brands admin UI: %s', 'transfer-brands-for-woocommerce'),
             $brands_admin_menu_exists ? __('Available', 'transfer-brands-for-woocommerce') : __('Not available', 'transfer-brands-for-woocommerce')
         );
@@ -407,9 +405,6 @@ class TBFW_Transfer_Brands_Utils {
             $result['message'] = __('Brand taxonomy is available. Transfer can proceed.', 'transfer-brands-for-woocommerce');
             $result['details'][] = __('Note: Could not verify if this is WooCommerce official Brands. Brands may have been created by another plugin.', 'transfer-brands-for-woocommerce');
         }
-
-        // Log debug info
-        $this->core->add_debug("WooCommerce Brands status check", $result);
 
         return $result;
     }

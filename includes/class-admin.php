@@ -47,6 +47,7 @@ class TBFW_Transfer_Brands_Admin {
         add_action('admin_menu', [$this, 'add_admin_pages']);
         add_action('admin_init', [$this, 'register_settings']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
+        add_action('admin_notices', [$this, 'maybe_show_review_notice']);
     }
     
     /**
@@ -250,9 +251,9 @@ class TBFW_Transfer_Brands_Admin {
         if (isset($input['batch_size'])) {
             $sanitized['batch_size'] = absint($input['batch_size']);
             if ($sanitized['batch_size'] < 5) $sanitized['batch_size'] = 5;
-            if ($sanitized['batch_size'] > 100) $sanitized['batch_size'] = 100;
+            if ($sanitized['batch_size'] > 50) $sanitized['batch_size'] = 50;
         } else {
-            $sanitized['batch_size'] = 20;
+            $sanitized['batch_size'] = 10;
         }
         
         // Backup enabled - checkboxes don't send a value when unchecked
@@ -385,9 +386,9 @@ class TBFW_Transfer_Brands_Admin {
      * @since 2.3.0
      */
     public function batch_size_callback() {
-        $batch_size = $this->core->get_option('batch_size', 20);
-        echo '<input type="number" name="tbfw_transfer_brands_options[batch_size]" value="' . esc_attr($batch_size) . '" min="5" max="100" />';
-        echo '<p class="description">' . esc_html__('Number of products to process per batch. Higher values may be faster but could time out.', 'transfer-brands-for-woocommerce') . '</p>';
+        $batch_size = $this->core->get_option('batch_size', 10);
+        echo '<input type="number" name="tbfw_transfer_brands_options[batch_size]" value="' . esc_attr($batch_size) . '" min="5" max="50" />';
+        echo '<p class="description">' . esc_html__('Number of products to process per batch (5-50). Lower values are safer for shared hosting. Default: 10.', 'transfer-brands-for-woocommerce') . '</p>';
     }
     
     /**
@@ -431,7 +432,8 @@ class TBFW_Transfer_Brands_Admin {
      * @return string Active tab
      */
     private function get_active_tab() {
-        return isset($_GET['tab']) ? sanitize_text_field($_GET['tab']) : 'transfer';
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Tab navigation doesn't require nonce verification
+        return isset($_GET['tab']) ? sanitize_text_field(wp_unslash($_GET['tab'])) : 'transfer';
     }
     
     /**
@@ -487,6 +489,7 @@ class TBFW_Transfer_Brands_Admin {
         $source_taxonomy = $this->core->get_option('source_taxonomy');
         
         // Properly prepare query with placeholders
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
         $products_data = $wpdb->get_results(
             $wpdb->prepare(
                 "SELECT post_id, meta_value FROM {$wpdb->postmeta} 
@@ -582,8 +585,7 @@ class TBFW_Transfer_Brands_Admin {
                             <td>
                                 <button class="button" onclick="jQuery('#product-<?php echo esc_attr($product['id']); ?>').toggle();"><?php esc_html_e('Show Details', 'transfer-brands-for-woocommerce'); ?></button>
                                 <div id="product-<?php echo esc_attr($product['id']); ?>" style="display: none; margin-top: 10px;">
-                                    <?php $attr_dump = print_r($product['attribute'], true); ?>
-                                    <pre><?php echo esc_html($attr_dump); ?></pre>
+                                    <pre><?php echo esc_html(wp_json_encode($product['attribute'], JSON_PRETTY_PRINT)); ?></pre>
                                 </div>
                             </td>
                         </tr>
@@ -610,8 +612,7 @@ class TBFW_Transfer_Brands_Admin {
                         <?php if (!empty($entry['data'])): ?>
                         <button class="button button-small" onclick="jQuery('#log-data-<?php echo esc_attr($index); ?>').toggle();"><?php esc_html_e('Show Data', 'transfer-brands-for-woocommerce'); ?></button>
                         <div id="log-data-<?php echo esc_attr($index); ?>" style="display: none; margin-top: 5px; padding: 5px; background: #fff;">
-                            <?php $data_dump = print_r($entry['data'], true); ?>
-                            <pre><?php echo esc_html($data_dump); ?></pre>
+                            <pre><?php echo esc_html(wp_json_encode($entry['data'], JSON_PRETTY_PRINT)); ?></pre>
                         </div>
                         <?php endif; ?>
                     </div>
@@ -678,7 +679,7 @@ class TBFW_Transfer_Brands_Admin {
         $products_with_source = $this->core->get_utils()->count_products_with_source();
 
         // Get backup information
-        $transfer_backup = get_option('tbfw_transfer_brands_backup', false);
+        $transfer_backup = get_option('tbfw_backup', false);
         $deleted_backup = get_option('tbfw_deleted_brands_backup', false);
 
         // Count products in deletion backup (for more accurate information)
@@ -721,17 +722,164 @@ class TBFW_Transfer_Brands_Admin {
         </div>
         <?php endif; ?>
 
-        <div class="notice notice-info">
-            <p><?php printf(
-                /* translators: %1$s: Source taxonomy name, %2$s: Destination taxonomy name */
-                esc_html__('This tool will transfer product brands from %1$s attribute to %2$s taxonomy.', 'transfer-brands-for-woocommerce'),
-                '<strong>' . esc_html($this->core->get_option('source_taxonomy')) . '</strong>',
-                '<strong>' . esc_html($this->core->get_option('destination_taxonomy')) . '</strong>'
-            ); ?></p>
-            <p><?php esc_html_e('You can change these settings in the Settings tab.', 'transfer-brands-for-woocommerce'); ?></p>
+        <?php
+        // Smart Detection Banner
+        $current_source = $this->core->get_option('source_taxonomy');
+        $detected_plugins = $this->get_supported_brand_plugins();
+        $alternative_sources = [];
+
+        // Check each detected plugin for brand counts
+        foreach ($detected_plugins as $plugin) {
+            if ($plugin['taxonomy'] !== $current_source) {
+                $plugin_terms = get_terms([
+                    'taxonomy' => $plugin['taxonomy'],
+                    'hide_empty' => false,
+                    'fields' => 'count'
+                ]);
+                $plugin_count = is_wp_error($plugin_terms) ? 0 : (int)$plugin_terms;
+                if ($plugin_count > 0) {
+                    $alternative_sources[] = [
+                        'taxonomy' => $plugin['taxonomy'],
+                        'name' => $plugin['name'],
+                        'count' => $plugin_count
+                    ];
+                }
+            }
+        }
+
+        // Check if current source has brands
+        $current_source_count = $source_count;
+        $best_alternative = !empty($alternative_sources) ? $alternative_sources[0] : null;
+        ?>
+
+        <?php if ($current_source_count === 0 && $best_alternative): ?>
+        <!-- Empty Source Warning with Alternative -->
+        <div class="tbfw-smart-banner warning">
+            <div class="tbfw-smart-banner-icon">
+                <span class="dashicons dashicons-warning"></span>
+            </div>
+            <div class="tbfw-smart-banner-content">
+                <p class="tbfw-smart-banner-title">
+                    <?php esc_html_e('No brands found in selected source', 'transfer-brands-for-woocommerce'); ?>
+                </p>
+                <p class="tbfw-smart-banner-description">
+                    <?php
+                    printf(
+                        /* translators: %1$s: Current source taxonomy name, %2$s: Alternative plugin name, %3$d: Number of brands in alternative */
+                        esc_html__('The selected source "%1$s" has no brands. However, we detected %3$d brands in %2$s.', 'transfer-brands-for-woocommerce'),
+                        '<strong>' . esc_html($current_source) . '</strong>',
+                        '<strong>' . esc_html($best_alternative['name']) . '</strong>',
+                        absint($best_alternative['count'])
+                    ); ?>
+                </p>
+            </div>
+            <div class="tbfw-smart-banner-action">
+                <button type="button" class="button button-primary" id="tbfw-switch-source" data-taxonomy="<?php echo esc_attr($best_alternative['taxonomy']); ?>">
+                    <?php
+                    /* translators: %s: Brand plugin name (e.g., "Perfect Brands") */
+                    printf(esc_html__('Use %s Instead', 'transfer-brands-for-woocommerce'), esc_html($best_alternative['name']));
+                    ?>
+                </button>
+            </div>
         </div>
+
+        <?php elseif ($current_source_count === 0): ?>
+        <!-- Empty Source Warning without Alternative -->
+        <div class="tbfw-smart-banner warning">
+            <div class="tbfw-smart-banner-icon">
+                <span class="dashicons dashicons-warning"></span>
+            </div>
+            <div class="tbfw-smart-banner-content">
+                <p class="tbfw-smart-banner-title">
+                    <?php esc_html_e('No brands found in selected source', 'transfer-brands-for-woocommerce'); ?>
+                </p>
+                <p class="tbfw-smart-banner-description">
+                    <?php
+                    printf(
+                        /* translators: %s: Source taxonomy name */
+                        esc_html__('The selected source "%s" has no brands to transfer. Please check your settings.', 'transfer-brands-for-woocommerce'),
+                        '<strong>' . esc_html($current_source) . '</strong>'
+                    );
+                    ?>
+                </p>
+            </div>
+            <div class="tbfw-smart-banner-action">
+                <a href="<?php echo esc_url(admin_url('admin.php?page=tbfw-transfer-brands&tab=settings')); ?>" class="button button-secondary">
+                    <?php esc_html_e('Change Settings', 'transfer-brands-for-woocommerce'); ?>
+                </a>
+            </div>
+        </div>
+
+        <?php elseif ($best_alternative && $best_alternative['count'] > $current_source_count): ?>
+        <!-- Better Alternative Detected -->
+        <div class="tbfw-smart-banner suggestion">
+            <div class="tbfw-smart-banner-icon">
+                <span class="dashicons dashicons-lightbulb"></span>
+            </div>
+            <div class="tbfw-smart-banner-content">
+                <p class="tbfw-smart-banner-title">
+                    <?php esc_html_e('Alternative brand source detected', 'transfer-brands-for-woocommerce'); ?>
+                </p>
+                <p class="tbfw-smart-banner-description">
+                    <?php
+                    printf(
+                        /* translators: %1$s: Alternative plugin name, %2$d: Brand count in alternative, %3$s: Current source name, %4$d: Brand count in current source */
+                        esc_html__('We detected %2$d brands in %1$s (you have %4$d in %3$s).', 'transfer-brands-for-woocommerce'),
+                        '<strong>' . esc_html($best_alternative['name']) . '</strong>',
+                        absint($best_alternative['count']),
+                        '<strong>' . esc_html($current_source) . '</strong>',
+                        absint($current_source_count)
+                    );
+                    ?>
+                </p>
+            </div>
+            <div class="tbfw-smart-banner-action">
+                <button type="button" class="button button-secondary" id="tbfw-switch-source" data-taxonomy="<?php echo esc_attr($best_alternative['taxonomy']); ?>">
+                    <?php
+                    /* translators: %s: Brand plugin name */
+                    printf(esc_html__('Switch to %s', 'transfer-brands-for-woocommerce'), esc_html($best_alternative['name']));
+                    ?>
+                </button>
+            </div>
+        </div>
+
+        <?php else: ?>
+        <!-- Ready to Transfer -->
+        <div class="tbfw-smart-banner ready">
+            <div class="tbfw-smart-banner-icon">
+                <span class="dashicons dashicons-yes-alt"></span>
+            </div>
+            <div class="tbfw-smart-banner-content">
+                <p class="tbfw-smart-banner-title">
+                    <?php esc_html_e('Ready to Transfer', 'transfer-brands-for-woocommerce'); ?>
+                </p>
+                <p class="tbfw-smart-banner-description">
+                    <?php
+                    printf(
+                        /* translators: %1$d: Number of brands, %2$s: Source taxonomy name, %3$s: Destination taxonomy name */
+                        esc_html__('Transfer %1$d brands from %2$s to %3$s.', 'transfer-brands-for-woocommerce'),
+                        absint($current_source_count),
+                        '<strong>' . esc_html($current_source) . '</strong>',
+                        '<strong>' . esc_html($this->core->get_option('destination_taxonomy')) . '</strong>'
+                    );
+                    ?>
+                    <?php if ($products_with_source > 0): ?>
+                    <?php
+                    /* translators: %d: Number of products */
+                    printf(esc_html__('%d products will be updated.', 'transfer-brands-for-woocommerce'), absint($products_with_source));
+                    ?>
+                    <?php endif; ?>
+                </p>
+            </div>
+            <div class="tbfw-smart-banner-action">
+                <a href="<?php echo esc_url(admin_url('admin.php?page=tbfw-transfer-brands&tab=settings')); ?>" class="tbfw-text-link">
+                    <?php esc_html_e('Change settings', 'transfer-brands-for-woocommerce'); ?>
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
         
-        <div class="card" style="max-width: 800px; margin-top: 20px; padding: 20px;">
+        <div class="card tbfw-card tbfw-mt-20">
             <h2><?php esc_html_e('Current Status', 'transfer-brands-for-woocommerce'); ?></h2>
             
             <?php 
@@ -740,10 +888,11 @@ class TBFW_Transfer_Brands_Admin {
                 
                 // Get custom attribute details
                 global $wpdb;
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
                 $custom_attribute_count = $wpdb->get_var(
                     $wpdb->prepare(
-                        "SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta} 
-                        WHERE meta_key = '_product_attributes' 
+                        "SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta}
+                        WHERE meta_key = '_product_attributes'
                         AND meta_value LIKE %s
                         AND meta_value LIKE %s
                         AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')",
@@ -751,7 +900,8 @@ class TBFW_Transfer_Brands_Admin {
                         '%"is_taxonomy";i:0;%'
                     )
                 );
-                
+
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
                 $taxonomy_attribute_count = $wpdb->get_var(
                     $wpdb->prepare(
                         "SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta} 
@@ -765,73 +915,136 @@ class TBFW_Transfer_Brands_Admin {
                 );
             ?>
             
-            <table class="widefat" style="margin-bottom: 20px;">
-                <tr>
-                    <td>
-                        <strong><?php esc_html_e('Source terms:', 'transfer-brands-for-woocommerce'); ?></strong>
-                        <span class="tbfw-tb-taxonomy-badge source"><?php echo esc_html($this->core->get_option('source_taxonomy')); ?></span>
-                    </td>
-                    <td><?php echo esc_html($source_count) . ' ' . esc_html__('brands', 'transfer-brands-for-woocommerce'); ?></td>
-                </tr>
-                <tr>
-                    <td>
-                        <strong><?php esc_html_e('Destination terms:', 'transfer-brands-for-woocommerce'); ?></strong>
-                        <span class="tbfw-tb-taxonomy-badge destination"><?php echo esc_html($this->core->get_option('destination_taxonomy')); ?></span>
-                    </td>
-                    <td><?php echo esc_html($destination_count) . ' ' . esc_html__('brands', 'transfer-brands-for-woocommerce'); ?></td>
-                </tr>
-                <tr>
-                    <td>
-                        <strong><?php esc_html_e('Products with source brand:', 'transfer-brands-for-woocommerce'); ?></strong>
-                        <a href="#" id="tbfw-tb-show-count-details" style="margin-left: 10px; font-size: 0.8em;">[<?php esc_html_e('Show details', 'transfer-brands-for-woocommerce'); ?>]</a>
-                    </td>
-                    <td><?php echo esc_html($products_with_source) . ' ' . esc_html__('products', 'transfer-brands-for-woocommerce'); ?></td>
-                </tr>
-                
-                <tr id="tbfw-tb-count-details" style="display: none; background-color: #f8f8f8;">
-                    <td colspan="2">
-                        <div style="padding: 10px; border-left: 4px solid #2271b1;">
-                            <p><strong><?php esc_html_e('Count details:', 'transfer-brands-for-woocommerce'); ?></strong></p>
-                            <ul style="margin-left: 20px; list-style-type: disc;">
-                                <li><?php esc_html_e('Products with custom (non-taxonomy) brand:', 'transfer-brands-for-woocommerce'); ?> <strong><?php echo esc_html($custom_attribute_count); ?></strong></li>
-                                <li><?php esc_html_e('Products with taxonomy brand:', 'transfer-brands-for-woocommerce'); ?> <strong><?php echo esc_html($taxonomy_attribute_count); ?></strong></li>
-                                <li><?php esc_html_e('Total products with any brand:', 'transfer-brands-for-woocommerce'); ?> <strong><?php echo esc_html($products_with_source); ?></strong></li>
-                            </ul>
-                            <p><em><?php esc_html_e('Note: The plugin will transfer both taxonomy and custom attributes.', 'transfer-brands-for-woocommerce'); ?></em></p>
-                            <?php if ($this->core->get_option('debug_mode')): ?>
-                            <p><a href="<?php echo esc_url(admin_url('admin.php?page=tbfw-transfer-brands-debug')); ?>" class="button"><?php esc_html_e('View Detailed Debug Info', 'transfer-brands-for-woocommerce'); ?></a></p>
-                            <?php endif; ?>
-                        </div>
-                    </td>
-                </tr>
-                
-                <?php if ($transfer_backup || $deleted_backup): ?>
-                <tr>
-                    <td><strong><?php esc_html_e('Backups:', 'transfer-brands-for-woocommerce'); ?></strong></td>
-                    <td>
-                        <?php if ($transfer_backup): ?>
-                            <?php esc_html_e('Transfer backup:', 'transfer-brands-for-woocommerce'); ?> <?php echo esc_html(date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($transfer_backup['timestamp']))); ?>
-                            <?php if (isset($transfer_backup['completed'])): ?>
-                                (<?php esc_html_e('completed', 'transfer-brands-for-woocommerce'); ?>)
-                            <?php endif; ?>
-                            <br>
+            
+            <!-- Backup Status Banner -->
+            <?php $backup_enabled = $this->core->get_option('backup_enabled'); ?>
+            <?php if ($backup_enabled): ?>
+            <div class="tbfw-backup-status enabled">
+                <div class="tbfw-backup-status-icon">
+                    <span class="dashicons dashicons-shield-alt"></span>
+                </div>
+                <div class="tbfw-backup-status-content">
+                    <p class="tbfw-backup-status-title">
+                        <?php esc_html_e('Data Protection', 'transfer-brands-for-woocommerce'); ?>
+                        <span class="tbfw-backup-status-badge"><?php esc_html_e('Enabled', 'transfer-brands-for-woocommerce'); ?></span>
+                    </p>
+                    <p class="tbfw-backup-status-description">
+                        <?php esc_html_e('Your data is protected. You can rollback changes after transfer if needed.', 'transfer-brands-for-woocommerce'); ?>
+                    </p>
+                </div>
+            </div>
+            <?php else: ?>
+            <div class="tbfw-backup-status disabled">
+                <div class="tbfw-backup-status-icon">
+                    <span class="dashicons dashicons-warning"></span>
+                </div>
+                <div class="tbfw-backup-status-content">
+                    <p class="tbfw-backup-status-title">
+                        <?php esc_html_e('Data Protection', 'transfer-brands-for-woocommerce'); ?>
+                        <span class="tbfw-backup-status-badge"><?php esc_html_e('Disabled', 'transfer-brands-for-woocommerce'); ?></span>
+                    </p>
+                    <p class="tbfw-backup-status-description">
+                        <?php esc_html_e('Backups are disabled. Changes cannot be rolled back!', 'transfer-brands-for-woocommerce'); ?>
+                    </p>
+                </div>
+                <div class="tbfw-backup-status-action">
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=tbfw-transfer-brands&tab=settings')); ?>" class="button button-secondary">
+                        <?php esc_html_e('Enable Backup', 'transfer-brands-for-woocommerce'); ?>
+                    </a>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <!-- Status Cards -->
+            <div class="tbfw-status-section">
+                <!-- Source Card -->
+                <div class="tbfw-status-card source">
+                    <div class="tbfw-status-card-header"><?php esc_html_e('Source', 'transfer-brands-for-woocommerce'); ?></div>
+                    <div class="tbfw-status-card-value" id="tbfw-source-count"><?php echo esc_html($source_count); ?></div>
+                    <div class="tbfw-status-card-label"><?php esc_html_e('brands', 'transfer-brands-for-woocommerce'); ?></div>
+                    <span class="tbfw-tb-taxonomy-badge source"><?php echo esc_html($this->core->get_option('source_taxonomy')); ?></span>
+                </div>
+
+                <!-- Arrow -->
+                <div class="tbfw-status-arrow">→</div>
+
+                <!-- Destination Card -->
+                <div class="tbfw-status-card destination">
+                    <div class="tbfw-status-card-header"><?php esc_html_e('Destination', 'transfer-brands-for-woocommerce'); ?></div>
+                    <div class="tbfw-status-card-value" id="tbfw-destination-count"><?php echo esc_html($destination_count); ?></div>
+                    <div class="tbfw-status-card-label"><?php esc_html_e('brands', 'transfer-brands-for-woocommerce'); ?></div>
+                    <span class="tbfw-tb-taxonomy-badge destination"><?php echo esc_html($this->core->get_option('destination_taxonomy')); ?></span>
+                </div>
+            </div>
+
+            <!-- Products Card -->
+            <div class="tbfw-status-section">
+                <div class="tbfw-status-card products">
+                    <div class="tbfw-status-card-header">
+                        <?php esc_html_e('Products to Transfer', 'transfer-brands-for-woocommerce'); ?>
+                        <a href="#" id="tbfw-tb-show-count-details" class="tbfw-status-details-toggle">[<?php esc_html_e('details', 'transfer-brands-for-woocommerce'); ?>]</a>
+                    </div>
+                    <div class="tbfw-status-card-value" id="tbfw-products-count"><?php echo esc_html($products_with_source); ?></div>
+                    <div class="tbfw-status-card-label"><?php esc_html_e('products with source brand', 'transfer-brands-for-woocommerce'); ?></div>
+
+                    <!-- Details (hidden by default) -->
+                    <div id="tbfw-tb-count-details" class="tbfw-status-details tbfw-hidden">
+                        <ul class="tbfw-list-disc">
+                            <li><?php esc_html_e('Custom (non-taxonomy) brand:', 'transfer-brands-for-woocommerce'); ?> <strong><?php echo esc_html($custom_attribute_count); ?></strong></li>
+                            <li><?php esc_html_e('Taxonomy brand:', 'transfer-brands-for-woocommerce'); ?> <strong><?php echo esc_html($taxonomy_attribute_count); ?></strong></li>
+                            <li><?php esc_html_e('Total:', 'transfer-brands-for-woocommerce'); ?> <strong><?php echo esc_html($products_with_source); ?></strong></li>
+                        </ul>
+                        <p class="tbfw-text-muted"><em><?php esc_html_e('Note: Both taxonomy and custom attributes will be transferred.', 'transfer-brands-for-woocommerce'); ?></em></p>
+                        <?php if ($this->core->get_option('debug_mode')): ?>
+                        <p class="tbfw-mt-10"><a href="<?php echo esc_url(admin_url('admin.php?page=tbfw-transfer-brands-debug')); ?>" class="button button-secondary"><?php esc_html_e('View Debug Info', 'transfer-brands-for-woocommerce'); ?></a></p>
                         <?php endif; ?>
-                        
+                    </div>
+                </div>
+            </div>
+
+
+            <!-- Refresh Counts Link -->
+            <div class="tbfw-refresh-counts-row">
+                <a href="#" id="tbfw-tb-refresh-counts" class="tbfw-refresh-link" title="<?php esc_attr_e('Clear cache and refresh counts', 'transfer-brands-for-woocommerce'); ?>">
+                    <span class="dashicons dashicons-update"></span>
+                    <?php esc_html_e('Refresh counts', 'transfer-brands-for-woocommerce'); ?>
+                </a>
+            </div>
+
+            <?php if ($transfer_backup || $deleted_backup): ?>
+            <!-- Backups Card -->
+            <div class="tbfw-status-section">
+                <div class="tbfw-status-card backups">
+                    <div class="tbfw-status-card-header"><?php esc_html_e('Active Backups', 'transfer-brands-for-woocommerce'); ?></div>
+                    <div class="tbfw-status-card-label" style="text-align: left; margin-top: 10px;">
+                        <?php if ($transfer_backup): ?>
+                        <p>
+                            <strong><?php esc_html_e('Transfer backup:', 'transfer-brands-for-woocommerce'); ?></strong>
+                            <?php echo esc_html(date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($transfer_backup['timestamp']))); ?>
+                            <?php if (isset($transfer_backup['completed'])): ?>
+                            <span class="tbfw-text-muted">(<?php esc_html_e('completed', 'transfer-brands-for-woocommerce'); ?>)</span>
+                            <?php endif; ?>
+                        </p>
+                        <?php endif; ?>
                         <?php if ($deleted_backup): ?>
-                            <?php esc_html_e('Deletion backup:', 'transfer-brands-for-woocommerce'); ?> <?php printf(
+                        <p>
+                            <strong><?php esc_html_e('Deletion backup:', 'transfer-brands-for-woocommerce'); ?></strong>
+                            <?php printf(
                                 /* translators: %s: Number of products */
                                 esc_html(_n('%s product', '%s products', count($deleted_backup), 'transfer-brands-for-woocommerce')),
                                 esc_html(count($deleted_backup))
                             ); ?>
+                        </p>
                         <?php endif; ?>
-                    </td>
-                </tr>
-                <?php endif; ?>
-            </table>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+
             
             <div class="actions">
                 <div class="action-container">
-                    <button id="tbfw-tb-check" class="button action-button"
+                    <button id="tbfw-tb-check" class="button button-secondary action-button"
                             data-tooltip="<?php esc_attr_e('Scan your products and brands to identify potential issues before transferring', 'transfer-brands-for-woocommerce'); ?>">
                         <?php esc_html_e('Analyze Brands', 'transfer-brands-for-woocommerce'); ?>
                     </button>
@@ -839,11 +1052,12 @@ class TBFW_Transfer_Brands_Admin {
                 </div>
                 
                 <div class="action-container">
-                    <button id="tbfw-tb-refresh-counts" class="button action-button"
-                            data-tooltip="<?php esc_attr_e('Update the count statistics to reflect current database state', 'transfer-brands-for-woocommerce'); ?>">
-                        <?php esc_html_e('Refresh Counts', 'transfer-brands-for-woocommerce'); ?>
+                    <button id="tbfw-tb-preview" class="button button-secondary action-button"
+                            data-tooltip="<?php esc_attr_e('See exactly what will change before transferring - no changes will be made', 'transfer-brands-for-woocommerce'); ?>"
+                            <?php echo !$can_transfer ? 'disabled' : ''; ?>>
+                        <?php esc_html_e('Preview Transfer', 'transfer-brands-for-woocommerce'); ?>
                     </button>
-                    <span class="action-description"><?php esc_html_e('Update statistics', 'transfer-brands-for-woocommerce'); ?></span>
+                    <span class="action-description"><?php esc_html_e('See what will change', 'transfer-brands-for-woocommerce'); ?></span>
                 </div>
                 
                 <div class="action-container">
@@ -899,7 +1113,7 @@ class TBFW_Transfer_Brands_Admin {
                     ($deleted_backup && !empty($deleted_backup))): 
                 ?>
                 <div class="action-container">
-                    <button id="tbfw-tb-cleanup" class="button action-button" style="border-color: #ccc;"
+                    <button id="tbfw-tb-cleanup" class="button action-button tbfw-button-tertiary"
                             data-tooltip="<?php esc_attr_e('Remove all backup data (prevents rollback)', 'transfer-brands-for-woocommerce'); ?>">
                         <?php esc_html_e('Clean Up Backups', 'transfer-brands-for-woocommerce'); ?>
                     </button>
@@ -909,33 +1123,62 @@ class TBFW_Transfer_Brands_Admin {
             </div>
         </div>
         
-        <div id="tbfw-tb-analysis" style="margin-top:20px; display:none;">
+        <div id="tbfw-tb-analysis" class="tbfw-mt-20 tbfw-hidden">
             <h3><?php esc_html_e('Analysis Results', 'transfer-brands-for-woocommerce'); ?></h3>
-            <div id="tbfw-tb-analysis-content" class="card" style="padding: 15px;"></div>
+            <div id="tbfw-tb-analysis-content" class="card tbfw-card-compact"></div>
         </div>
         
-        <div id="tbfw-tb-progress" style="margin-top:20px; display:none;">
+        <!-- Preview Transfer Results -->
+        <div id="tbfw-tb-preview-results" class="tbfw-mt-20 tbfw-hidden">
+            <div class="tbfw-preview-panel">
+                <div class="tbfw-preview-header">
+                    <span class="dashicons dashicons-visibility"></span>
+                    <h3><?php esc_html_e('Transfer Preview', 'transfer-brands-for-woocommerce'); ?></h3>
+                </div>
+                <div class="tbfw-preview-body">
+                    <div id="tbfw-preview-content">
+                        <!-- Content loaded via AJAX -->
+                    </div>
+                    <div class="tbfw-preview-actions">
+                        <button id="tbfw-tb-start-from-preview" class="button button-primary">
+                            <span class="dashicons dashicons-migrate"></span>
+                            <?php esc_html_e('Start Transfer Now', 'transfer-brands-for-woocommerce'); ?>
+                        </button>
+                        <button id="tbfw-tb-cancel-preview" class="button button-secondary">
+                            <?php esc_html_e('Cancel', 'transfer-brands-for-woocommerce'); ?>
+                        </button>
+                        <span class="tbfw-preview-note">
+                            <span class="dashicons dashicons-info-outline"></span>
+                            <?php esc_html_e('No changes have been made yet', 'transfer-brands-for-woocommerce'); ?>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="tbfw-tb-progress" class="tbfw-mt-20 tbfw-hidden" aria-live="polite">
             <h3 id="tbfw-tb-progress-title"><?php esc_html_e('Transfer Progress', 'transfer-brands-for-woocommerce'); ?></h3>
-            <div class="card" style="padding: 15px;">
-                <div class="progress-info" style="margin-bottom: 10px;">
-                    <div id="tbfw-tb-progress-stats" style="font-weight: bold; margin-bottom: 5px;"></div>
-                    <div id="tbfw-tb-progress-warning" style="color: #d63638; margin-bottom: 5px; display: none;">
+            <div id="tbfw-tb-progress-phase" aria-live="polite"></div>
+            <div class="card tbfw-card-compact">
+                <div class="progress-info tbfw-mb-10">
+                    <div id="tbfw-tb-progress-stats" class="tbfw-progress-stats"></div>
+                    <div id="tbfw-tb-progress-warning" class="tbfw-text-error tbfw-mb-5 tbfw-hidden" role="alert">
                         <strong><?php esc_html_e('WARNING:', 'transfer-brands-for-woocommerce'); ?></strong> <?php esc_html_e('Do not refresh the page until the process is complete!', 'transfer-brands-for-woocommerce'); ?>
                     </div>
-                    <div id="tbfw-tb-timer" style="font-size: 0.9em; color: #555;"></div>
+                    <div id="tbfw-tb-timer" class="tbfw-progress-timer"></div>
                 </div>
-                <progress id="tbfw-tb-progress-bar" value="0" max="100" style="width:100%; height: 20px;"></progress>
+                <progress id="tbfw-tb-progress-bar" value="0" max="100" style="width:100%; height: 20px;" aria-label="Transfer progress"></progress>
                 <p id="tbfw-tb-progress-text"></p>
-                <div id="tbfw-tb-log" style="margin-top: 15px; max-height: 200px; overflow-y: scroll; background: #f5f5f5; padding: 10px; display: none; font-family: monospace; font-size: 12px;"></div>
+                <div id="tbfw-tb-log" class="tbfw-log-container tbfw-hidden"></div>
             </div>
         </div>
         
         <!-- Modal for delete confirmation -->
-        <div id="tbfw-tb-delete-confirm-modal" class="tbfw-tb-modal">
+        <div id="tbfw-tb-delete-confirm-modal" class="tbfw-tb-modal" role="dialog" aria-modal="true" aria-labelledby="tbfw-modal-title" aria-hidden="true">
             <div class="tbfw-tb-modal-content">
                 <div class="tbfw-tb-modal-header">
-                    <span class="tbfw-tb-modal-close">&times;</span>
-                    <h2><?php esc_html_e('Confirm Deletion', 'transfer-brands-for-woocommerce'); ?></h2>
+                    <button type="button" class="tbfw-tb-modal-close" aria-label="Close dialog">&times;</button>
+                    <h2 id="tbfw-modal-title"><?php esc_html_e('Confirm Deletion', 'transfer-brands-for-woocommerce'); ?></h2>
                 </div>
                 <div class="tbfw-tb-modal-body">
                     <p class="tbfw-tb-warning-text"><?php esc_html_e('Warning: This will permanently remove the original brand attributes from all products.', 'transfer-brands-for-woocommerce'); ?></p>
@@ -949,6 +1192,71 @@ class TBFW_Transfer_Brands_Admin {
                     <div class="tbfw-tb-modal-buttons">
                         <button id="tbfw-tb-cancel-delete" class="button"><?php esc_html_e('Cancel', 'transfer-brands-for-woocommerce'); ?></button>
                         <button id="tbfw-tb-confirm-delete" class="button button-warning"><?php esc_html_e('Confirm Delete', 'transfer-brands-for-woocommerce'); ?></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    /**
+     * Show review notice after successful transfer
+     *
+     * @since 3.0.0
+     */
+    public function maybe_show_review_notice() {
+        // Check if notice was dismissed
+        $dismissed = get_user_meta(get_current_user_id(), 'tbfw_review_notice_dismissed', true);
+        if ($dismissed) {
+            // Check if permanently dismissed
+            if ($dismissed === 'permanent') {
+                return;
+            }
+            // Check if temporarily dismissed (timestamp)
+            if (is_numeric($dismissed) && time() < intval($dismissed)) {
+                return;
+            }
+        }
+
+        // Check if user has completed at least one successful transfer
+        $transfer_completed = get_option('tbfw_transfer_completed', false);
+        if (!$transfer_completed) {
+            return;
+        }
+
+        // Only show on WooCommerce or plugin pages
+        $screen = get_current_screen();
+        if (!$screen || (strpos($screen->id, 'woocommerce') === false && strpos($screen->id, 'tbfw') === false)) {
+            return;
+        }
+
+        // Get plugin icon URL
+        $icon_url = TBFW_ASSETS_URL . 'icon-256x256.png';
+        ?>
+        <div class="tbfw-review-notice notice notice-info is-dismissible" data-nonce="<?php echo esc_attr(wp_create_nonce('tbfw_dismiss_review')); ?>">
+            <div class="tbfw-review-notice-container">
+                <div class="tbfw-review-notice-image">
+                    <img src="<?php echo esc_url($icon_url); ?>" alt="Transfer Brands">
+                </div>
+                <div class="tbfw-review-notice-content">
+                    <h3><?php esc_html_e('Enjoying Transfer Brands for WooCommerce?', 'transfer-brands-for-woocommerce'); ?></h3>
+                    <p>
+                        <?php esc_html_e('Great news! Your brand transfer completed successfully. If this plugin saved you time, a quick 5-star review helps us keep improving it. It only takes a moment!', 'transfer-brands-for-woocommerce'); ?>
+                    </p>
+                    <div class="tbfw-review-notice-actions">
+                        <a href="https://wordpress.org/support/plugin/transfer-brands-for-woocommerce/reviews/?filter=5#new-post" target="_blank" class="button button-primary">
+                            <span class="dashicons dashicons-star-filled"></span>
+                            <?php esc_html_e('Leave a Review', 'transfer-brands-for-woocommerce'); ?>
+                        </a>
+                        <a href="https://pluginatlas.com/transfer-brands-for-woocommerce/" target="_blank" class="button button-secondary">
+                            <?php esc_html_e('Learn More', 'transfer-brands-for-woocommerce'); ?>
+                        </a>
+                        <a href="#" class="tbfw-review-dismiss-link" data-action="later">
+                            <?php esc_html_e('Maybe later', 'transfer-brands-for-woocommerce'); ?>
+                        </a>
+                        <a href="#" class="tbfw-review-dismiss-link" data-action="never">
+                            <?php esc_html_e("Don't show again", 'transfer-brands-for-woocommerce'); ?>
+                        </a>
                     </div>
                 </div>
             </div>

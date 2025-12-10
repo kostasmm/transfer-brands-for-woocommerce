@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Transfer Brands for WooCommerce
  * Plugin URI: https://pluginatlas.com/transfer-brands-for-woocommerce
- * Description: Official migration tool for WooCommerce 9.6 Brands. Safely transfer your product brand attributes to the new brand taxonomy with image support, batch processing, and full backup capabilities.
- * Version: 2.8.7
+ * Description: Official WooCommerce 9.6 brand migration tool. Transfer from Perfect Brands, YITH, or custom attributes with backup and image support.
+ * Version: 3.0.0
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
@@ -35,7 +35,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('TBFW_VERSION', '2.8.7');
+define('TBFW_VERSION', '3.0.0');
 define('TBFW_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('TBFW_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('TBFW_INCLUDES_DIR', TBFW_PLUGIN_DIR . 'includes/');
@@ -87,17 +87,6 @@ function tbfw_autoloader($class_name) {
     }
 }
 spl_autoload_register('tbfw_autoloader');
-
-/**
- * Load textdomain for translations
- *
- * @since 2.6.3
- */
-function tbfw_load_textdomain() {
-    load_plugin_textdomain('transfer-brands-for-woocommerce', false, dirname(plugin_basename(__FILE__)) . '/languages');
-}
-add_action('init', 'tbfw_load_textdomain');
-
 /**
  * Initialize the plugin
  *
@@ -144,12 +133,24 @@ function tbfw_activate() {
         }
     }
     
-    // Add default options
+    // Add default options with smart source detection
     if (!get_option('tbfw_transfer_brands_options')) {
+        // Smart default: detect installed brand plugins
+        $smart_source = 'pa_brand'; // Fallback default
+
+        // Check for Perfect Brands (most common)
+        if (taxonomy_exists('pwb-brand')) {
+            $smart_source = 'pwb-brand';
+        }
+        // Check for YITH Brands
+        elseif (taxonomy_exists('yith_product_brand')) {
+            $smart_source = 'yith_product_brand';
+        }
+
         add_option('tbfw_transfer_brands_options', [
-            'source_taxonomy' => 'pa_brand',
+            'source_taxonomy' => $smart_source,
             'destination_taxonomy' => 'product_brand',
-            'batch_size' => 20,
+            'batch_size' => 10,
             'backup_enabled' => true,
             'debug_mode' => false
         ]);
