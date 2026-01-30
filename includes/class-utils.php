@@ -31,27 +31,27 @@ class TBFW_Transfer_Brands_Utils {
      */
     public function count_source_terms() {
         $terms = get_terms([
-            'taxonomy' => $this->core->get_option('source_taxonomy'), 
+            'taxonomy' => $this->core->get_option('source_taxonomy'),
             'hide_empty' => false,
             'fields' => 'count'
         ]);
-        
-        return is_wp_error($terms) ? 0 : $terms;
+
+        return is_wp_error($terms) ? 0 : (int) $terms;
     }
-    
+
     /**
      * Count destination terms
-     * 
+     *
      * @return int Number of terms
      */
     public function count_destination_terms() {
         $terms = get_terms([
-            'taxonomy' => $this->core->get_option('destination_taxonomy'), 
+            'taxonomy' => $this->core->get_option('destination_taxonomy'),
             'hide_empty' => false,
             'fields' => 'count'
         ]);
-        
-        return is_wp_error($terms) ? 0 : $terms;
+
+        return is_wp_error($terms) ? 0 : (int) $terms;
     }
     
     /**
@@ -96,7 +96,8 @@ class TBFW_Transfer_Brands_Utils {
             );
         }
 
-        return $count;
+        // Cast to int with null coalescing for safety
+        return (int) ($count ?? 0);
     }
 
     /**
@@ -196,7 +197,7 @@ class TBFW_Transfer_Brands_Utils {
             foreach ($query->posts as $post) {
                 $product = wc_get_product($post->ID);
                 if (!$product) continue;
-                
+
                 $attrs = $product->get_attributes();
                 if (isset($attrs[$this->core->get_option('source_taxonomy')])) {
                     $terms = [];
@@ -206,7 +207,7 @@ class TBFW_Transfer_Brands_Utils {
                             $terms[] = $term->name;
                         }
                     }
-                    
+
                     $result[] = [
                         'id' => $post->ID,
                         'name' => $product->get_name(),
@@ -215,7 +216,10 @@ class TBFW_Transfer_Brands_Utils {
                 }
             }
         }
-        
+
+        // Reset post data after custom query
+        wp_reset_postdata();
+
         return $result;
     }
     

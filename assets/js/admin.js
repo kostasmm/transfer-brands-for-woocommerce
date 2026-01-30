@@ -8,10 +8,34 @@
  */
 
 jQuery(document).ready(function ($) {
+    // Safety check: ensure localized data exists
+    if (typeof tbfwTbe === 'undefined') {
+        console.error('Transfer Brands: Required localization data not found.');
+        return;
+    }
+
     var ajaxUrl = tbfwTbe.ajaxUrl;
     var nonce = tbfwTbe.nonce;
     var i18n = tbfwTbe.i18n;
     var log = [];
+
+    // Flag to prevent concurrent operations (race condition protection)
+    var transferInProgress = false;
+
+    /**
+     * Escape HTML entities to prevent XSS
+     *
+     * @param {string} str - String to escape
+     * @return {string} Escaped string
+     */
+    function escapeHtml(str) {
+        if (typeof str !== 'string') {
+            return '';
+        }
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(str));
+        return div.innerHTML;
+    }
 
     // Setup tooltips
     $('[data-tooltip]').tooltip({
@@ -131,9 +155,10 @@ jQuery(document).ready(function ($) {
             (now.getMinutes() < 10 ? '0' : '') + now.getMinutes() + ':' +
             (now.getSeconds() < 10 ? '0' : '') + now.getSeconds();
 
-        log.push('[' + timestamp + '] ' + message);
+        // Escape message to prevent XSS
+        log.push('[' + timestamp + '] ' + escapeHtml(message));
 
-        // Update log display
+        // Update log display with escaped content
         $('#tbfw-tb-log').html('<code>' + log.join('<br>') + '</code>');
 
         // Scroll to bottom
@@ -141,47 +166,6 @@ jQuery(document).ready(function ($) {
         if (logDiv) {
             logDiv.scrollTop = logDiv.scrollHeight;
         }
-    }
-
-    /**
-     * Run a step for the transfer process
-     *
-     * @param {string} step - Current step name
-     * @param {number} offset - Current offset
-     */
-    function runStep(step, offset) {
-        addToLog('Running step: ' + step + ' (offset: ' + offset + ')');
-
-        $.post(ajaxUrl, {
-            action: 'tbfw_transfer_brands',
-            nonce: nonce,
-            step: step,
-            offset: offset
-        }, function (response) {
-            if (response.success) {
-                $('#tbfw-tb-progress-bar').val(response.data.percent);
-                $('#tbfw-tb-progress-text').text(i18n.progress + ' ' + response.data.percent + '% - ' + response.data.message);
-
-                if (response.data.log) {
-                    addToLog(response.data.log);
-                }
-
-                if (response.data.step === 'backup' ||
-                    response.data.step === 'terms' ||
-                    response.data.step === 'products') {
-                    runStep(response.data.step, response.data.offset);
-                } else {
-                    addToLog('Transfer completed successfully!');
-                    $('#tbfw-tb-progress-text').text(i18n.completed + ' ' + response.data.message);
-                }
-            } else {
-                addToLog(i18n.error + ' ' + response.data.message);
-                $('#tbfw-tb-progress-text').text(i18n.error + ' ' + response.data.message);
-            }
-        }).fail(function (xhr, status, error) {
-            addToLog(i18n.ajax_error + ' ' + error);
-            $('#tbfw-tb-progress-text').text(i18n.ajax_error + ' ' + error);
-        });
     }
 
     /**
@@ -219,6 +203,7 @@ jQuery(document).ready(function ($) {
                     // Continue with next batch
                     runDeleteStep(0); // Always use 0 as offset since we're excluding by ID now
                 } else {
+                    transferInProgress = false;
                     addToLog('Delete old brands completed successfully!');
                     $('#tbfw-tb-progress-text').text(i18n.completed + ' ' + response.data.message);
                     // Reload page after 3 seconds
@@ -227,10 +212,12 @@ jQuery(document).ready(function ($) {
                     }, 3000);
                 }
             } else {
+                transferInProgress = false;
                 addToLog(i18n.error + ' ' + response.data.message);
                 $('#tbfw-tb-progress-text').text(i18n.error + ' ' + response.data.message);
             }
         }).fail(function (xhr, status, error) {
+            transferInProgress = false;
             addToLog(i18n.ajax_error + ' ' + error);
             $('#tbfw-tb-progress-text').text(i18n.ajax_error + ' ' + error);
         });
@@ -252,20 +239,27 @@ jQuery(document).ready(function ($) {
             if (response.success) {
                 $('#tbfw-tb-analysis-content').html(response.data.html);
             } else {
-                $('#tbfw-tb-analysis-content').html('<p class="error">' + i18n.error + ' ' + response.data.message + '</p>');
+                $('#tbfw-tb-analysis-content').html('<p class="error">' + escapeHtml(i18n.error) + ' ' + escapeHtml(response.data.message || '') + '</p>');
             }
             // Scroll to results and highlight
             scrollToResults('#tbfw-tb-analysis');
         }).fail(function (xhr, status, error) {
             setButtonLoading($button, false);
-            $('#tbfw-tb-analysis-content').html('<p class="error">' + i18n.ajax_error + ' ' + error + '</p>');
+            $('#tbfw-tb-analysis-content').html('<p class="error">' + escapeHtml(i18n.ajax_error) + ' ' + escapeHtml(error || '') + '</p>');
             scrollToResults('#tbfw-tb-analysis');
         });
     });
 
     // Start transfer
     $('#tbfw-tb-start').on('click', function () {
+        // Prevent concurrent transfers (race condition protection)
+        if (transferInProgress) {
+            alert(i18n.transfer_in_progress || 'A transfer operation is already in progress. Please wait.');
+            return;
+        }
+
         confirmAction(i18n.confirm_transfer, function () {
+            transferInProgress = true;
             $('#tbfw-tb-progress').show();
             $('#tbfw-tb-progress-title').text('Transfer Progress');
             $('#tbfw-tb-progress-bar').val(0);
@@ -348,6 +342,7 @@ jQuery(document).ready(function ($) {
                         } else {
                             // Clear timer when done
                             clearInterval(updateTimer);
+                            transferInProgress = false;
 
                             $('#tbfw-tb-progress-warning').hide();
 
@@ -363,6 +358,7 @@ jQuery(document).ready(function ($) {
                     } else {
                         // Clear timer on error
                         clearInterval(updateTimer);
+                        transferInProgress = false;
                         $('#tbfw-tb-progress-warning').hide();
 
                         addToLog(i18n.error + ' ' + response.data.message);
@@ -371,6 +367,7 @@ jQuery(document).ready(function ($) {
                 }).fail(function (xhr, status, error) {
                     // Clear timer on error
                     clearInterval(updateTimer);
+                    transferInProgress = false;
                     $('#tbfw-tb-progress-warning').hide();
 
                     addToLog(i18n.ajax_error + ' ' + error);
@@ -394,16 +391,30 @@ jQuery(document).ready(function ($) {
 
     // Confirm delete button in modal
     $('#tbfw-tb-confirm-delete').on('click', function () {
+        // Prevent concurrent operations (race condition protection)
+        if (transferInProgress) {
+            alert(i18n.transfer_in_progress || 'An operation is already in progress. Please wait.');
+            return;
+        }
+
         var confirmText = $('#tbfw-tb-delete-confirm-input').val().trim();
 
         if (confirmText === 'YES') {
             closeModal('tbfw-tb-delete-confirm-modal');
+            transferInProgress = true;
 
             // First initialize the deletion process
             $.post(ajaxUrl, {
                 action: 'tbfw_init_delete',
                 nonce: nonce
-            }, function () {
+            }, function (response) {
+                // Validate initialization succeeded
+                if (!response || !response.success) {
+                    transferInProgress = false;
+                    alert(i18n.error + ' ' + (response && response.data ? response.data.message : 'Initialization failed'));
+                    return;
+                }
+
                 $('#tbfw-tb-progress').show();
                 $('#tbfw-tb-progress-title').text('Delete Old Brands');
                 $('#tbfw-tb-progress-bar').val(0);
@@ -413,6 +424,10 @@ jQuery(document).ready(function ($) {
 
                 // Start the delete process
                 runDeleteStep(0);
+            }).fail(function (xhr, status, error) {
+                // Reset flag if initialization fails
+                transferInProgress = false;
+                alert(i18n.ajax_error + ' ' + error);
             });
         } else {
             // Show error if the confirmation text is incorrect
@@ -422,7 +437,14 @@ jQuery(document).ready(function ($) {
 
     // Rollback transfer
     $('#tbfw-tb-rollback').on('click', function () {
+        // Prevent concurrent operations
+        if (transferInProgress) {
+            alert(i18n.transfer_in_progress || 'An operation is already in progress. Please wait.');
+            return;
+        }
+
         confirmAction(i18n.confirm_rollback, function () {
+            transferInProgress = true;
             $('#tbfw-tb-progress').show();
             $('#tbfw-tb-progress-title').text('Rollback Progress');
             $('#tbfw-tb-progress-bar').val(0);
@@ -443,6 +465,7 @@ jQuery(document).ready(function ($) {
                     nonce: nonce
                 }, function (response) {
                     if (response.success) {
+                        transferInProgress = false;
                         $('#tbfw-tb-progress-bar').val(100);
                         $('#tbfw-tb-progress-text').text('Rollback completed successfully!');
                         addToLog('Rollback completed: ' + response.data.message);
@@ -452,10 +475,12 @@ jQuery(document).ready(function ($) {
                             location.reload();
                         }, 2000);
                     } else {
+                        transferInProgress = false;
                         $('#tbfw-tb-progress-text').text(i18n.error + ' ' + response.data.message);
                         addToLog(i18n.error + ' ' + response.data.message);
                     }
                 }).fail(function (xhr, status, error) {
+                    transferInProgress = false;
                     $('#tbfw-tb-progress-text').text(i18n.ajax_error + ' ' + error);
                     addToLog(i18n.ajax_error + ' ' + error);
                 });
@@ -465,7 +490,14 @@ jQuery(document).ready(function ($) {
 
     // Restore deleted brands
     $('#tbfw-tb-rollback-delete').on('click', function () {
+        // Prevent concurrent operations
+        if (transferInProgress) {
+            alert(i18n.transfer_in_progress || 'An operation is already in progress. Please wait.');
+            return;
+        }
+
         confirmAction(i18n.confirm_restore, function () {
+            transferInProgress = true;
             $('#tbfw-tb-progress').show();
             $('#tbfw-tb-progress-title').text('Restore Deleted Brands');
             $('#tbfw-tb-progress-bar').val(0);
@@ -491,6 +523,7 @@ jQuery(document).ready(function ($) {
                     nonce: nonce
                 }, function (response) {
                     if (response.success) {
+                        transferInProgress = false;
                         $('#tbfw-tb-progress-bar').val(100);
                         $('#tbfw-tb-progress-text').text('Restoration completed successfully!');
 
@@ -501,14 +534,15 @@ jQuery(document).ready(function ($) {
                         $('#tbfw-tb-timer').text(i18n.time_elapsed + ' ' + minutes + ' ' + i18n.minutes + ' ' + seconds + ' ' + i18n.seconds);
                         $('#tbfw-tb-progress-warning').hide();
 
-                        // Show detailed message with affected products count
+                        // Show detailed message with affected products count (escaped for safety)
+                        var restoredCount = parseInt(response.data.restored, 10) || 0;
                         $('#tbfw-tb-progress-stats').html(
-                            'Restored brands to <span style="color:#135e96">' + response.data.restored + '</span> products'
+                            'Restored brands to <span style="color:#135e96">' + restoredCount + '</span> products'
                         );
 
                         // Add detailed log
-                        var detailedLog = 'Deleted brands successfully restored to ' + response.data.restored + ' products.';
-                        if (response.data.restored === 0) {
+                        var detailedLog = 'Deleted brands successfully restored to ' + restoredCount + ' products.';
+                        if (restoredCount === 0) {
                             detailedLog += ' These products may already have the attribute.';
                         }
                         addToLog(detailedLog);
@@ -522,11 +556,13 @@ jQuery(document).ready(function ($) {
                             location.reload();
                         }, 3000);
                     } else {
+                        transferInProgress = false;
                         $('#tbfw-tb-progress-text').text(i18n.error + ' ' + response.data.message);
                         $('#tbfw-tb-progress-warning').hide();
                         addToLog(i18n.error + ' ' + response.data.message);
                     }
                 }).fail(function (xhr, status, error) {
+                    transferInProgress = false;
                     $('#tbfw-tb-progress-text').text(i18n.ajax_error + ' ' + error);
                     $('#tbfw-tb-progress-warning').hide();
                     addToLog(i18n.ajax_error + ' ' + error);
@@ -537,7 +573,14 @@ jQuery(document).ready(function ($) {
 
     // Clean up backups
     $('#tbfw-tb-cleanup').on('click', function () {
+        // Prevent concurrent operations
+        if (transferInProgress) {
+            alert(i18n.transfer_in_progress || 'An operation is already in progress. Please wait.');
+            return;
+        }
+
         confirmAction(i18n.confirm_cleanup, function () {
+            transferInProgress = true;
             $('#tbfw-tb-progress').show();
             $('#tbfw-tb-progress-title').text('Clean Up Backups');
             $('#tbfw-tb-progress-bar').val(0);
@@ -549,6 +592,7 @@ jQuery(document).ready(function ($) {
                 nonce: nonce
             }, function (response) {
                 if (response.success) {
+                    transferInProgress = false;
                     $('#tbfw-tb-progress-bar').val(100);
                     $('#tbfw-tb-progress-text').text('All backups deleted successfully!');
                     addToLog('All backups have been cleaned from the database.');
@@ -561,10 +605,12 @@ jQuery(document).ready(function ($) {
                         location.reload();
                     }, 2000);
                 } else {
+                    transferInProgress = false;
                     $('#tbfw-tb-progress-text').text(i18n.error + ' ' + response.data.message);
                     addToLog(i18n.error + ' ' + response.data.message);
                 }
             }).fail(function (xhr, status, error) {
+                transferInProgress = false;
                 addToLog(i18n.ajax_error + ' ' + error);
                 $('#tbfw-tb-progress-text').text(i18n.ajax_error + ' ' + error);
             });
@@ -650,6 +696,34 @@ jQuery(document).ready(function ($) {
     // Cancel Preview
     $('#tbfw-tb-cancel-preview').on('click', function () {
         $('#tbfw-tb-preview-results').hide();
+    });
+
+    // Verify Transfer button
+    $('#tbfw-tb-verify').on('click', function () {
+        var $button = $(this);
+        setButtonLoading($button, true);
+
+        $('#tbfw-tb-analysis').show();
+        $('#tbfw-tb-analysis-content').html('<p>Verifying transfer results... please wait.</p>');
+
+        $.post(ajaxUrl, {
+            action: 'tbfw_verify_transfer',
+            nonce: nonce
+        }, function (response) {
+            setButtonLoading($button, false);
+
+            if (response.success) {
+                $('#tbfw-tb-analysis-content').html(response.data.html);
+            } else {
+                $('#tbfw-tb-analysis-content').html('<p class="error">' + escapeHtml(i18n.error) + ' ' + escapeHtml(response.data.message || '') + '</p>');
+            }
+            // Scroll to results
+            scrollToResults('#tbfw-tb-analysis');
+        }).fail(function (xhr, status, error) {
+            setButtonLoading($button, false);
+            $('#tbfw-tb-analysis-content').html('<p class="error">' + escapeHtml(i18n.ajax_error) + ' ' + escapeHtml(error || '') + '</p>');
+            scrollToResults('#tbfw-tb-analysis');
+        });
     });
 
 

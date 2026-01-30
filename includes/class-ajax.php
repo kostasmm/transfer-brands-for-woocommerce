@@ -48,6 +48,9 @@ class TBFW_Transfer_Brands_Ajax {
 
         // Review notice dismiss handler
         add_action('wp_ajax_tbfw_dismiss_review_notice', [$this, 'ajax_dismiss_review_notice']);
+
+        // Verify transfer handler
+        add_action('wp_ajax_tbfw_verify_transfer', [$this, 'ajax_verify_transfer']);
     }
     /**
      * Get user-friendly error message
@@ -116,7 +119,7 @@ class TBFW_Transfer_Brands_Ajax {
 
         // Add technical details only in debug mode
         if ($this->core->get_option('debug_mode') && $message !== $technical_message) {
-            $message .= ' [' . $technical_message . ']';
+            $message .= ' [' . esc_html($technical_message) . ']';
         }
 
         return $message;
@@ -173,16 +176,22 @@ class TBFW_Transfer_Brands_Ajax {
             
             // Create backup if it's the first run
             if ($offset === 0) {
-                $this->core->get_backup()->create_backup();
+                $backup_result = $this->core->get_backup()->create_backup();
+                if (!$backup_result) {
+                    wp_send_json_error([
+                        'message' => __('Failed to create backup. Please check your database connection and try again.', 'transfer-brands-for-woocommerce')
+                    ]);
+                    return;
+                }
             }
-            
+
             // Backup completed, move to next step
             wp_send_json_success([
                 'step' => 'terms',
                 'offset' => 0,
                 'percent' => 5,
-                'message' => 'Backup created, starting transfer...',
-                'log' => 'Backup completed successfully'
+                'message' => __('Backup created, starting transfer...', 'transfer-brands-for-woocommerce'),
+                'log' => __('Backup completed successfully', 'transfer-brands-for-woocommerce')
             ]);
         }
 
@@ -364,6 +373,9 @@ class TBFW_Transfer_Brands_Ajax {
             if ($products_query->have_posts()) {
                 foreach ($products_query->posts as $post) {
                     $product = wc_get_product($post->ID);
+                    if (!$product) {
+                        continue;
+                    }
                     $attrs = $product->get_attributes();
 
                     if (isset($attrs[$source_taxonomy])) {
@@ -482,21 +494,105 @@ class TBFW_Transfer_Brands_Ajax {
             $html .= '<div class="notice notice-warning inline" style="margin-top: 15px;">';
             $html .= '<p><strong>Warning:</strong> The following brand names already exist in the destination taxonomy:</p>';
             $html .= '<ul style="margin-left: 20px; list-style-type: disc;">';
-            
+
             $displayed_terms = array_slice($conflicting_terms, 0, 10);
             foreach ($displayed_terms as $term) {
                 $html .= '<li>' . esc_html($term) . '</li>';
             }
-            
+
             if (count($conflicting_terms) > 10) {
                 $html .= '<li>...and ' . (count($conflicting_terms) - 10) . ' more</li>';
             }
-            
+
             $html .= '</ul>';
             $html .= '<p>Existing brands will be reused and not duplicated.</p>';
             $html .= '</div>';
         }
-        
+
+        // Check for products with multiple brands (important for brand plugins)
+        if ($is_brand_plugin) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
+            $multi_brand_count = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM (
+                    SELECT object_id, COUNT(*) as brand_count
+                    FROM {$wpdb->term_relationships} tr
+                    JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+                    WHERE tt.taxonomy = %s
+                    GROUP BY object_id
+                    HAVING brand_count > 1
+                ) AS multi",
+                $source_taxonomy
+            ));
+
+            if ($multi_brand_count > 0) {
+                // Get the actual products with multiple brands (up to 20 for display in analysis)
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
+                $multi_brand_ids = $wpdb->get_col($wpdb->prepare(
+                    "SELECT object_id FROM (
+                        SELECT object_id, COUNT(*) as brand_count
+                        FROM {$wpdb->term_relationships} tr
+                        JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+                        WHERE tt.taxonomy = %s
+                        GROUP BY object_id
+                        HAVING brand_count > 1
+                    ) AS multi
+                    LIMIT 20",
+                    $source_taxonomy
+                ));
+
+                $html .= '<div class="notice notice-warning inline" style="margin-top: 15px;">';
+                $html .= '<p><strong>' . esc_html__('Multiple Brands Detected:', 'transfer-brands-for-woocommerce') . '</strong> ';
+                $html .= sprintf(
+                    /* translators: %d: Number of products with multiple brands */
+                    esc_html__('%d products have multiple brands assigned. These will all be transferred, but you may want to review them.', 'transfer-brands-for-woocommerce'),
+                    $multi_brand_count
+                );
+                $html .= '</p>';
+
+                $html .= '<details style="margin-top: 10px;">';
+                $html .= '<summary style="cursor: pointer; color: #2271b1; font-weight: 600;">' . esc_html__('View products with multiple brands', 'transfer-brands-for-woocommerce') . '</summary>';
+                $html .= '<table class="widefat striped" style="margin-top: 10px;">';
+                $html .= '<thead><tr>';
+                $html .= '<th>' . esc_html__('ID', 'transfer-brands-for-woocommerce') . '</th>';
+                $html .= '<th>' . esc_html__('Product', 'transfer-brands-for-woocommerce') . '</th>';
+                $html .= '<th>' . esc_html__('Brands Assigned', 'transfer-brands-for-woocommerce') . '</th>';
+                $html .= '<th>' . esc_html__('Action', 'transfer-brands-for-woocommerce') . '</th>';
+                $html .= '</tr></thead>';
+                $html .= '<tbody>';
+
+                foreach ($multi_brand_ids as $product_id) {
+                    $product = wc_get_product($product_id);
+                    if (!$product) continue;
+
+                    $product_terms = get_the_terms($product_id, $source_taxonomy);
+                    $brand_names = [];
+                    if ($product_terms && !is_wp_error($product_terms)) {
+                        $brand_names = wp_list_pluck($product_terms, 'name');
+                    }
+
+                    $html .= '<tr>';
+                    $html .= '<td>' . esc_html($product_id) . '</td>';
+                    $html .= '<td>' . esc_html($product->get_name()) . '</td>';
+                    $html .= '<td>' . esc_html(implode(', ', $brand_names)) . '</td>';
+                    $html .= '<td><a href="' . esc_url(get_edit_post_link($product_id, 'raw')) . '" target="_blank" class="button button-small">' . esc_html__('Edit', 'transfer-brands-for-woocommerce') . '</a></td>';
+                    $html .= '</tr>';
+                }
+
+                $html .= '</tbody></table>';
+
+                if ($multi_brand_count > 20) {
+                    $html .= '<p style="margin-top: 10px;"><em>' . sprintf(
+                        /* translators: %d: number of additional products not shown */
+                        esc_html__('...and %d more products. Use "Preview Transfer" for a complete list.', 'transfer-brands-for-woocommerce'),
+                        $multi_brand_count - 20
+                    ) . '</em></p>';
+                }
+
+                $html .= '</details>';
+                $html .= '</div>';
+            }
+        }
+
         if (!empty($sample_products)) {
             if ($is_brand_plugin) {
                 $html .= '<h4>' . esc_html__('Sample Products with Brand Plugin Brands', 'transfer-brands-for-woocommerce') . '</h4>';
@@ -650,6 +746,17 @@ class TBFW_Transfer_Brands_Ajax {
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter -- Query is built dynamically with proper placeholders and $wpdb->prepare() handles escaping
             $product_ids = $wpdb->get_col($wpdb->prepare($query, $query_args));
 
+            // Check for database errors
+            if ($wpdb->last_error) {
+                $this->core->add_debug("Database error retrieving products for deletion", [
+                    'error' => $wpdb->last_error
+                ]);
+                wp_send_json_error([
+                    'message' => __('Database error retrieving products. Please try again.', 'transfer-brands-for-woocommerce')
+                ]);
+                return;
+            }
+
             // Count remaining products for progress
             $remaining_query = "SELECT COUNT(DISTINCT post_id)
                                FROM {$wpdb->postmeta}
@@ -667,6 +774,19 @@ class TBFW_Transfer_Brands_Ajax {
 
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Query is built dynamically, migration tool requires direct query
             $remaining = $wpdb->get_var($wpdb->prepare($remaining_query, $remaining_args));
+
+            // Check for database errors and ensure $remaining is numeric
+            if ($wpdb->last_error) {
+                $this->core->add_debug("Database error counting remaining products", [
+                    'error' => $wpdb->last_error
+                ]);
+                wp_send_json_error([
+                    'message' => __('Database error counting products. Please try again.', 'transfer-brands-for-woocommerce')
+                ]);
+                return;
+            }
+
+            $remaining = (int) ($remaining ?? 0);
 
             // Total is remaining plus already processed
             $total = $remaining + count($processed_ids);
@@ -1034,6 +1154,7 @@ class TBFW_Transfer_Brands_Ajax {
 
         // Check for potential issues
         $issues = [];
+        $multi_brand_products = [];
 
         // Check for products with multiple brands
         global $wpdb;
@@ -1050,6 +1171,41 @@ class TBFW_Transfer_Brands_Ajax {
                 ) AS multi",
                 $source_taxonomy
             ));
+
+            // Get the actual products with multiple brands (up to 50 for display)
+            if ($multi_brand_count > 0) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
+                $multi_brand_ids = $wpdb->get_col($wpdb->prepare(
+                    "SELECT object_id FROM (
+                        SELECT object_id, COUNT(*) as brand_count
+                        FROM {$wpdb->term_relationships} tr
+                        JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+                        WHERE tt.taxonomy = %s
+                        GROUP BY object_id
+                        HAVING brand_count > 1
+                    ) AS multi
+                    LIMIT 50",
+                    $source_taxonomy
+                ));
+
+                foreach ($multi_brand_ids as $product_id) {
+                    $product = wc_get_product($product_id);
+                    if (!$product) continue;
+
+                    $product_terms = get_the_terms($product_id, $source_taxonomy);
+                    $brand_names = [];
+                    if ($product_terms && !is_wp_error($product_terms)) {
+                        $brand_names = wp_list_pluck($product_terms, 'name');
+                    }
+
+                    $multi_brand_products[] = [
+                        'id' => $product_id,
+                        'name' => $product->get_name(),
+                        'edit_url' => get_edit_post_link($product_id, 'raw'),
+                        'brands' => $brand_names
+                    ];
+                }
+            }
         } else {
             $multi_brand_count = 0; // For attributes, this is handled differently
         }
@@ -1061,7 +1217,9 @@ class TBFW_Transfer_Brands_Ajax {
                     /* translators: %d: Number of products with multiple brands */
                     __('%d products have multiple brands assigned', 'transfer-brands-for-woocommerce'),
                     $multi_brand_count
-                )
+                ),
+                'products' => $multi_brand_products,
+                'total_count' => $multi_brand_count
             ];
         }
 
@@ -1109,7 +1267,44 @@ class TBFW_Transfer_Brands_Ajax {
             $html .= '<p><strong>' . esc_html__('Potential Issues:', 'transfer-brands-for-woocommerce') . '</strong></p>';
             $html .= '<ul style="margin-left: 20px; list-style-type: disc;">';
             foreach ($issues as $issue) {
-                $html .= '<li>' . esc_html($issue['message']) . '</li>';
+                $html .= '<li>' . esc_html($issue['message']);
+
+                // If this issue has product details, show them in an expandable section
+                if (!empty($issue['products'])) {
+                    $html .= '<details style="margin-top: 10px;">';
+                    $html .= '<summary style="cursor: pointer; color: #2271b1;">' . esc_html__('View affected products', 'transfer-brands-for-woocommerce') . '</summary>';
+                    $html .= '<table class="widefat striped" style="margin-top: 10px;">';
+                    $html .= '<thead><tr>';
+                    $html .= '<th>' . esc_html__('ID', 'transfer-brands-for-woocommerce') . '</th>';
+                    $html .= '<th>' . esc_html__('Product', 'transfer-brands-for-woocommerce') . '</th>';
+                    $html .= '<th>' . esc_html__('Brands Assigned', 'transfer-brands-for-woocommerce') . '</th>';
+                    $html .= '<th>' . esc_html__('Action', 'transfer-brands-for-woocommerce') . '</th>';
+                    $html .= '</tr></thead>';
+                    $html .= '<tbody>';
+
+                    foreach ($issue['products'] as $product) {
+                        $html .= '<tr>';
+                        $html .= '<td>' . esc_html($product['id']) . '</td>';
+                        $html .= '<td>' . esc_html($product['name']) . '</td>';
+                        $html .= '<td>' . esc_html(implode(', ', $product['brands'])) . '</td>';
+                        $html .= '<td><a href="' . esc_url($product['edit_url']) . '" target="_blank" class="button button-small">' . esc_html__('Edit', 'transfer-brands-for-woocommerce') . '</a></td>';
+                        $html .= '</tr>';
+                    }
+
+                    $html .= '</tbody></table>';
+
+                    if (isset($issue['total_count']) && $issue['total_count'] > count($issue['products'])) {
+                        $html .= '<p style="margin-top: 10px;"><em>' . sprintf(
+                            /* translators: %d: number of additional products not shown */
+                            esc_html__('...and %d more products not shown. Fix these first, then run preview again.', 'transfer-brands-for-woocommerce'),
+                            $issue['total_count'] - count($issue['products'])
+                        ) . '</em></p>';
+                    }
+
+                    $html .= '</details>';
+                }
+
+                $html .= '</li>';
             }
             $html .= '</ul>';
             $html .= '</div>';
@@ -1218,11 +1413,18 @@ class TBFW_Transfer_Brands_Ajax {
      * AJAX handler for dismissing the review notice
      *
      * @since 3.0.0
+     * @since 3.0.4 Added capability check for security
      */
     public function ajax_dismiss_review_notice() {
         // Verify nonce
         if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'tbfw_dismiss_review')) {
             wp_send_json_error(['message' => __('Security check failed.', 'transfer-brands-for-woocommerce')]);
+            return;
+        }
+
+        // Verify capability
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => __('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce')]);
             return;
         }
 
@@ -1238,6 +1440,190 @@ class TBFW_Transfer_Brands_Ajax {
         }
 
         wp_send_json_success(['message' => __('Notice dismissed.', 'transfer-brands-for-woocommerce')]);
+    }
+
+    /**
+     * AJAX handler for verifying transfer results
+     *
+     * Shows what was actually transferred to help diagnose issues
+     *
+     * @since 3.0.1
+     */
+    public function ajax_verify_transfer() {
+        check_ajax_referer('tbfw_transfer_brands_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => __('You do not have permission to perform this action.', 'transfer-brands-for-woocommerce')]);
+            return;
+        }
+
+        $destination_taxonomy = $this->core->get_option('destination_taxonomy');
+
+        // Check if destination taxonomy exists
+        if (!taxonomy_exists($destination_taxonomy)) {
+            wp_send_json_error([
+                'message' => sprintf(
+                    /* translators: %s: taxonomy name */
+                    __('Destination taxonomy "%s" does not exist. WooCommerce Brands may not be enabled.', 'transfer-brands-for-woocommerce'),
+                    $destination_taxonomy
+                )
+            ]);
+            return;
+        }
+
+        // Get all brands in destination taxonomy
+        $destination_terms = get_terms([
+            'taxonomy' => $destination_taxonomy,
+            'hide_empty' => false
+        ]);
+
+        if (is_wp_error($destination_terms)) {
+            wp_send_json_error([
+                'message' => __('Error retrieving brands: ', 'transfer-brands-for-woocommerce') . $destination_terms->get_error_message()
+            ]);
+            return;
+        }
+
+        $brands_count = count($destination_terms);
+
+        // Count products with destination brands
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
+        $products_with_brands = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(DISTINCT tr.object_id)
+            FROM {$wpdb->term_relationships} tr
+            INNER JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+            INNER JOIN {$wpdb->posts} p ON tr.object_id = p.ID
+            WHERE tt.taxonomy = %s
+            AND p.post_type = 'product'
+            AND p.post_status = 'publish'",
+            $destination_taxonomy
+        ));
+
+        // Get sample products with brands
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
+        $sample_product_ids = $wpdb->get_col($wpdb->prepare(
+            "SELECT DISTINCT tr.object_id
+            FROM {$wpdb->term_relationships} tr
+            INNER JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+            INNER JOIN {$wpdb->posts} p ON tr.object_id = p.ID
+            WHERE tt.taxonomy = %s
+            AND p.post_type = 'product'
+            AND p.post_status = 'publish'
+            LIMIT 10",
+            $destination_taxonomy
+        ));
+
+        $sample_products = [];
+        foreach ($sample_product_ids as $product_id) {
+            $product = wc_get_product($product_id);
+            if (!$product) continue;
+
+            $product_terms = get_the_terms($product_id, $destination_taxonomy);
+            $brand_names = [];
+            if ($product_terms && !is_wp_error($product_terms)) {
+                $brand_names = wp_list_pluck($product_terms, 'name');
+            }
+
+            $sample_products[] = [
+                'id' => $product_id,
+                'name' => $product->get_name(),
+                'brands' => $brand_names
+            ];
+        }
+
+        // Build HTML response
+        $html = '<div class="tbfw-verify-results">';
+
+        // Summary section
+        $html .= '<h4>' . esc_html__('Transfer Verification Results', 'transfer-brands-for-woocommerce') . '</h4>';
+
+        if ($brands_count > 0 && $products_with_brands > 0) {
+            $html .= '<div class="notice notice-success inline" style="margin: 0 0 15px 0; padding: 10px 12px;">';
+            $html .= '<p style="margin: 0;"><span class="dashicons dashicons-yes-alt" style="color: #00a32a;"></span> ';
+            $html .= '<strong>' . esc_html__('Transfer appears successful!', 'transfer-brands-for-woocommerce') . '</strong></p>';
+            $html .= '</div>';
+        } elseif ($brands_count > 0 && $products_with_brands == 0) {
+            $html .= '<div class="notice notice-warning inline" style="margin: 0 0 15px 0; padding: 10px 12px;">';
+            $html .= '<p style="margin: 0;"><span class="dashicons dashicons-warning" style="color: #dba617;"></span> ';
+            $html .= '<strong>' . esc_html__('Brands exist but no products are assigned!', 'transfer-brands-for-woocommerce') . '</strong></p>';
+            $html .= '<p style="margin: 5px 0 0 0;">' . esc_html__('The brand terms were created, but products were not assigned. Try running the transfer again.', 'transfer-brands-for-woocommerce') . '</p>';
+            $html .= '</div>';
+        } else {
+            $html .= '<div class="notice notice-error inline" style="margin: 0 0 15px 0; padding: 10px 12px;">';
+            $html .= '<p style="margin: 0;"><span class="dashicons dashicons-dismiss" style="color: #d63638;"></span> ';
+            $html .= '<strong>' . esc_html__('No brands found in destination taxonomy!', 'transfer-brands-for-woocommerce') . '</strong></p>';
+            $html .= '<p style="margin: 5px 0 0 0;">' . esc_html__('The transfer may have failed. Check that WooCommerce Brands is enabled and try again.', 'transfer-brands-for-woocommerce') . '</p>';
+            $html .= '</div>';
+        }
+
+        // Statistics
+        $html .= '<ul class="tbfw-list-disc" style="margin: 15px 0;">';
+        $html .= '<li>' . sprintf(
+            /* translators: %1$d: number of brands, %2$s: taxonomy name */
+            esc_html__('%1$d brands in destination taxonomy (%2$s)', 'transfer-brands-for-woocommerce'),
+            $brands_count,
+            '<code>' . esc_html($destination_taxonomy) . '</code>'
+        ) . '</li>';
+        $html .= '<li>' . sprintf(
+            /* translators: %d: number of products */
+            esc_html__('%d products have brands assigned', 'transfer-brands-for-woocommerce'),
+            $products_with_brands
+        ) . '</li>';
+        $html .= '</ul>';
+
+        // Brand list
+        if ($brands_count > 0) {
+            $html .= '<details style="margin: 15px 0;">';
+            $html .= '<summary style="cursor: pointer; font-weight: 600;">' . esc_html__('View destination brands', 'transfer-brands-for-woocommerce') . '</summary>';
+            $html .= '<ul class="tbfw-preview-list" style="margin: 10px 0 0 20px;">';
+            $display_terms = array_slice($destination_terms, 0, 20);
+            foreach ($display_terms as $term) {
+                $html .= '<li>' . esc_html($term->name) . ' <span class="tbfw-text-muted">(' . $term->count . ' products)</span></li>';
+            }
+            if ($brands_count > 20) {
+                $html .= '<li><em>' . sprintf(
+                    /* translators: %d: number of additional brands not shown */
+                    esc_html__('...and %d more brands', 'transfer-brands-for-woocommerce'),
+                    $brands_count - 20
+                ) . '</em></li>';
+            }
+            $html .= '</ul>';
+            $html .= '</details>';
+        }
+
+        // Sample products
+        if (!empty($sample_products)) {
+            $html .= '<h4 style="margin-top: 20px;">' . esc_html__('Sample Products with Brands', 'transfer-brands-for-woocommerce') . '</h4>';
+            $html .= '<table class="widefat striped" style="margin-top: 10px;">';
+            $html .= '<thead><tr>';
+            $html .= '<th>' . esc_html__('ID', 'transfer-brands-for-woocommerce') . '</th>';
+            $html .= '<th>' . esc_html__('Product', 'transfer-brands-for-woocommerce') . '</th>';
+            $html .= '<th>' . esc_html__('Assigned Brands', 'transfer-brands-for-woocommerce') . '</th>';
+            $html .= '</tr></thead>';
+            $html .= '<tbody>';
+
+            foreach ($sample_products as $product) {
+                $html .= '<tr>';
+                $html .= '<td>' . esc_html($product['id']) . '</td>';
+                $html .= '<td>' . esc_html($product['name']) . '</td>';
+                $html .= '<td>' . esc_html(implode(', ', $product['brands'])) . '</td>';
+                $html .= '</tr>';
+            }
+
+            $html .= '</tbody></table>';
+        }
+
+        $html .= '</div>';
+
+        wp_send_json_success([
+            'html' => $html,
+            'summary' => [
+                'brands_count' => $brands_count,
+                'products_with_brands' => (int)$products_with_brands,
+                'success' => ($brands_count > 0 && $products_with_brands > 0)
+            ]
+        ]);
     }
 
 }

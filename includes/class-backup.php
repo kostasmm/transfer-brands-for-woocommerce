@@ -61,14 +61,20 @@ class TBFW_Transfer_Brands_Backup {
         }
         
         // Don't backup all products yet - we'll do this incrementally
-        update_option('tbfw_backup', $backup);
-        
+        $update_result = update_option('tbfw_backup', $backup);
+
+        // Check if update succeeded (returns false if value unchanged or on failure)
+        // For new backups, we need to verify the option was saved
+        $saved_backup = get_option('tbfw_backup', []);
+        $backup_valid = !empty($saved_backup) && isset($saved_backup['timestamp']) && $saved_backup['timestamp'] === $backup['timestamp'];
+
         $this->core->add_debug("Created backup", [
-            'dest_terms_count' => count($dest_terms),
-            'timestamp' => $backup['timestamp']
+            'dest_terms_count' => is_wp_error($dest_terms) ? 0 : count($dest_terms),
+            'timestamp' => $backup['timestamp'],
+            'save_result' => $backup_valid
         ]);
-        
-        return true;
+
+        return $backup_valid;
     }
     
     /**
@@ -103,7 +109,17 @@ class TBFW_Transfer_Brands_Backup {
 
         if (!isset($backup['products'][$product_id])) {
             $terms = wp_get_object_terms($product_id, $this->core->get_option('destination_taxonomy'), ['fields' => 'ids']);
-            $backup['products'][$product_id] = $terms;
+
+            // Validate return value - don't store WP_Error objects in backup
+            if (is_wp_error($terms)) {
+                $this->core->add_debug("Error backing up product terms", [
+                    'product_id' => $product_id,
+                    'error' => $terms->get_error_message()
+                ]);
+                return;
+            }
+
+            $backup['products'][$product_id] = is_array($terms) ? $terms : [];
             update_option('tbfw_backup', $backup);
         }
     }
@@ -124,50 +140,101 @@ class TBFW_Transfer_Brands_Backup {
     
     /**
      * Rollback a transfer
-     * 
+     *
      * @return array Result data
      */
     public function rollback_transfer() {
         $backup = get_option('tbfw_backup', []);
-        
+
         if (empty($backup) || !isset($backup['timestamp'])) {
             return [
                 'success' => false,
                 'message' => 'No backup found to restore from.'
             ];
         }
-        
+
+        $rollback_errors = [];
+        $products_restored = 0;
+        $terms_deleted = 0;
+
         // Restore products to their previous state
         if (isset($backup['products']) && is_array($backup['products'])) {
             foreach ($backup['products'] as $product_id => $term_ids) {
-                wp_set_object_terms($product_id, $term_ids, $this->core->get_option('destination_taxonomy'));
+                $result = wp_set_object_terms($product_id, $term_ids, $this->core->get_option('destination_taxonomy'));
+
+                if (is_wp_error($result)) {
+                    $rollback_errors[] = [
+                        'type' => 'product',
+                        'id' => $product_id,
+                        'error' => $result->get_error_message()
+                    ];
+                    $this->core->add_debug("Rollback error restoring product", [
+                        'product_id' => $product_id,
+                        'error' => $result->get_error_message()
+                    ]);
+                } else {
+                    $products_restored++;
+                }
             }
         }
-        
+
         // Delete terms that were created during the transfer
         $mappings = get_option('tbfw_term_mappings', []);
-        
+
         foreach ($mappings as $old_id => $new_id) {
             // Only delete terms created during transfer (not existing ones)
             if (!isset($backup['terms'][$new_id])) {
-                wp_delete_term($new_id, $this->core->get_option('destination_taxonomy'));
+                $result = wp_delete_term($new_id, $this->core->get_option('destination_taxonomy'));
+
+                if (is_wp_error($result)) {
+                    $rollback_errors[] = [
+                        'type' => 'term',
+                        'id' => $new_id,
+                        'error' => $result->get_error_message()
+                    ];
+                    $this->core->add_debug("Rollback error deleting term", [
+                        'term_id' => $new_id,
+                        'error' => $result->get_error_message()
+                    ]);
+                } elseif ($result !== false) {
+                    $terms_deleted++;
+                }
             }
         }
-        
-        // Clear the backup and mappings
-        delete_option('tbfw_term_mappings');
-        delete_option('tbfw_backup');
-        
-        return [
-            'success' => true,
-            'message' => 'Rollback completed successfully.'
-        ];
+
+        // Log rollback results
+        $this->core->add_debug("Rollback completed", [
+            'products_restored' => $products_restored,
+            'terms_deleted' => $terms_deleted,
+            'errors' => count($rollback_errors)
+        ]);
+
+        // Only clear backup and mappings if rollback was successful (no critical errors)
+        if (empty($rollback_errors)) {
+            delete_option('tbfw_term_mappings');
+            delete_option('tbfw_backup');
+            delete_option('tbfw_transfer_failed_products');
+
+            return [
+                'success' => true,
+                'message' => "Rollback completed successfully. Restored {$products_restored} products, deleted {$terms_deleted} terms."
+            ];
+        } else {
+            // Keep backup data for retry, but return partial success info
+            return [
+                'success' => false,
+                'message' => "Rollback completed with errors. Restored {$products_restored} products, deleted {$terms_deleted} terms. " .
+                             count($rollback_errors) . " errors occurred. Backup preserved for retry.",
+                'errors' => $rollback_errors
+            ];
+        }
     }
     
     /**
      * Rollback deleted brands
      *
      * @since 2.8.8 Added support for brand plugin taxonomies
+     * @since 3.0.2 Added error handling and conditional backup deletion
      * @return array Result data
      */
     public function rollback_deleted_brands() {
@@ -183,7 +250,9 @@ class TBFW_Transfer_Brands_Backup {
         // Count for reporting
         $restored_count = 0;
         $skipped_count = 0;
-        $total_in_backup = count($deleted_backup);
+        $failed_count = 0;
+        $total_in_backup = is_array($deleted_backup) ? count($deleted_backup) : 0;
+        $restore_errors = [];
 
         // Iterate through each product in the backup
         foreach ($deleted_backup as $product_id => $backup_data) {
@@ -228,7 +297,19 @@ class TBFW_Transfer_Brands_Backup {
                         if (!$term) {
                             // Create the term if it doesn't exist
                             $result = wp_insert_term($brand_name, $taxonomy_name);
-                            if (!is_wp_error($result)) {
+                            if (is_wp_error($result)) {
+                                $this->core->add_debug("Failed to create term during rollback", [
+                                    'term_name' => $brand_name,
+                                    'taxonomy' => $taxonomy_name,
+                                    'error' => $result->get_error_message()
+                                ]);
+                                $restore_errors[] = [
+                                    'type' => 'term_create',
+                                    'product_id' => $product_id,
+                                    'term_name' => $brand_name,
+                                    'error' => $result->get_error_message()
+                                ];
+                            } elseif (isset($result['term_id']) && $result['term_id'] > 0) {
                                 $term_ids[] = $result['term_id'];
                             }
                         } else {
@@ -238,14 +319,30 @@ class TBFW_Transfer_Brands_Backup {
 
                     // Assign terms to product
                     if (!empty($term_ids)) {
-                        wp_set_object_terms($product_id, $term_ids, $taxonomy_name);
-                        $restored_count++;
+                        $set_result = wp_set_object_terms($product_id, $term_ids, $taxonomy_name);
 
-                        $this->core->add_debug("Successfully restored brand plugin terms", [
-                            'product_id' => $product_id,
-                            'taxonomy' => $taxonomy_name,
-                            'restored_terms' => $brand_names
-                        ]);
+                        if (is_wp_error($set_result)) {
+                            $failed_count++;
+                            $restore_errors[] = [
+                                'type' => 'term_assign',
+                                'product_id' => $product_id,
+                                'error' => $set_result->get_error_message()
+                            ];
+                            $this->core->add_debug("Failed to assign terms to product", [
+                                'product_id' => $product_id,
+                                'taxonomy' => $taxonomy_name,
+                                'error' => $set_result->get_error_message()
+                            ]);
+                        } else {
+                            $restored_count++;
+                            $this->core->add_debug("Successfully restored brand plugin terms", [
+                                'product_id' => $product_id,
+                                'taxonomy' => $taxonomy_name,
+                                'restored_terms' => $brand_names
+                            ]);
+                        }
+                    } else {
+                        $failed_count++;
                     }
                 } else {
                     // For WooCommerce attributes, use the original logic
@@ -280,7 +377,19 @@ class TBFW_Transfer_Brands_Backup {
                             if (!$term) {
                                 // Create the term
                                 $result = wp_insert_term($brand_name, $taxonomy_name);
-                                if (!is_wp_error($result)) {
+                                if (is_wp_error($result)) {
+                                    $this->core->add_debug("Failed to create term during rollback", [
+                                        'term_name' => $brand_name,
+                                        'taxonomy' => $taxonomy_name,
+                                        'error' => $result->get_error_message()
+                                    ]);
+                                    $restore_errors[] = [
+                                        'type' => 'term_create',
+                                        'product_id' => $product_id,
+                                        'term_name' => $brand_name,
+                                        'error' => $result->get_error_message()
+                                    ];
+                                } elseif (isset($result['term_id']) && $result['term_id'] > 0) {
                                     $term_ids[] = $result['term_id'];
                                 }
                             } else {
@@ -290,7 +399,19 @@ class TBFW_Transfer_Brands_Backup {
 
                         // Now assign the terms to the product
                         if (!empty($term_ids)) {
-                            wp_set_object_terms($product_id, $term_ids, $taxonomy_name);
+                            $set_result = wp_set_object_terms($product_id, $term_ids, $taxonomy_name);
+
+                            if (is_wp_error($set_result)) {
+                                $restore_errors[] = [
+                                    'type' => 'term_assign',
+                                    'product_id' => $product_id,
+                                    'error' => $set_result->get_error_message()
+                                ];
+                                $this->core->add_debug("Failed to assign taxonomy terms", [
+                                    'product_id' => $product_id,
+                                    'error' => $set_result->get_error_message()
+                                ]);
+                            }
                         }
 
                         // For taxonomy attributes, WooCommerce stores 'value' as empty string
@@ -301,17 +422,34 @@ class TBFW_Transfer_Brands_Backup {
                     }
 
                     // Update the product's attributes
-                    update_post_meta($product_id, '_product_attributes', $current_attributes);
+                    $update_result = update_post_meta($product_id, '_product_attributes', $current_attributes);
 
-                    $restored_count++;
-
-                    $this->core->add_debug("Successfully restored brand attribute", [
-                        'product_id' => $product_id,
-                        'attribute' => $current_attributes[$taxonomy_name]
-                    ]);
+                    if ($update_result === false) {
+                        $failed_count++;
+                        $restore_errors[] = [
+                            'type' => 'meta_update',
+                            'product_id' => $product_id,
+                            'error' => 'Failed to update product attributes'
+                        ];
+                        $this->core->add_debug("Failed to update product attributes", [
+                            'product_id' => $product_id
+                        ]);
+                    } else {
+                        $restored_count++;
+                        $this->core->add_debug("Successfully restored brand attribute", [
+                            'product_id' => $product_id,
+                            'attribute' => $current_attributes[$taxonomy_name]
+                        ]);
+                    }
                 }
 
             } catch (Exception $e) {
+                $failed_count++;
+                $restore_errors[] = [
+                    'type' => 'exception',
+                    'product_id' => $product_id,
+                    'error' => $e->getMessage()
+                ];
                 $this->core->add_debug("Error restoring brand attribute", [
                     'product_id' => $product_id,
                     'error' => $e->getMessage()
@@ -319,18 +457,52 @@ class TBFW_Transfer_Brands_Backup {
             }
         }
 
-        // Delete the backup after successful restore
-        delete_option('tbfw_deleted_brands_backup');
-
-        // Return success response with detailed information
-        return [
-            'success' => true,
-            'message' => "Brands restored to {$restored_count} products.",
+        // Log rollback results
+        $this->core->add_debug("Deleted brands rollback completed", [
             'restored' => $restored_count,
             'skipped' => $skipped_count,
-            'total_in_backup' => $total_in_backup,
-            'details' => "Total products in backup: {$total_in_backup}, Restored: {$restored_count}, Skipped: {$skipped_count}"
-        ];
+            'failed' => $failed_count,
+            'errors' => count($restore_errors)
+        ]);
+
+        // Only delete backup if we successfully restored something AND no critical errors
+        if ($restored_count > 0 && empty($restore_errors)) {
+            delete_option('tbfw_deleted_brands_backup');
+
+            return [
+                'success' => true,
+                'message' => "Brands restored to {$restored_count} products.",
+                'restored' => $restored_count,
+                'skipped' => $skipped_count,
+                'failed' => $failed_count,
+                'total_in_backup' => $total_in_backup,
+                'details' => "Total products in backup: {$total_in_backup}, Restored: {$restored_count}, Skipped: {$skipped_count}"
+            ];
+        } elseif ($restored_count > 0) {
+            // Partial success - some restored, some errors - keep backup for retry
+            return [
+                'success' => true,
+                'message' => "Partially restored brands to {$restored_count} products. {$failed_count} failed. Backup preserved for retry.",
+                'restored' => $restored_count,
+                'skipped' => $skipped_count,
+                'failed' => $failed_count,
+                'total_in_backup' => $total_in_backup,
+                'errors' => $restore_errors,
+                'details' => "Total: {$total_in_backup}, Restored: {$restored_count}, Skipped: {$skipped_count}, Failed: {$failed_count}"
+            ];
+        } else {
+            // Nothing restored - keep backup
+            return [
+                'success' => false,
+                'message' => "Failed to restore any brands. Backup preserved for retry.",
+                'restored' => 0,
+                'skipped' => $skipped_count,
+                'failed' => $failed_count,
+                'total_in_backup' => $total_in_backup,
+                'errors' => $restore_errors,
+                'details' => "Total: {$total_in_backup}, Restored: 0, Skipped: {$skipped_count}, Failed: {$failed_count}"
+            ];
+        }
     }
     
     /**
@@ -445,10 +617,22 @@ class TBFW_Transfer_Brands_Backup {
 
     /**
      * Clean up all backups
-     * 
+     *
+     * @since 3.0.2 Added capability check
      * @return array Result data
      */
     public function cleanup_backups() {
+        // Security check - only administrators can delete all backups
+        if (!current_user_can('manage_options')) {
+            $this->core->add_debug("Cleanup backups denied - insufficient permissions", [
+                'user_id' => get_current_user_id()
+            ]);
+            return [
+                'success' => false,
+                'message' => 'Insufficient permissions to clean up backups.'
+            ];
+        }
+
         // Delete all backup related options
         delete_option('tbfw_backup');
         delete_option('tbfw_term_mappings');

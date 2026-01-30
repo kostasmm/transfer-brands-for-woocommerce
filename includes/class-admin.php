@@ -54,11 +54,17 @@ class TBFW_Transfer_Brands_Admin {
      * Enqueue admin scripts and styles
      *
      * @since 2.3.0
+     * @since 3.0.4 Added capability check
      * @param string $hook Current admin page
      */
     public function enqueue_admin_scripts($hook) {
         // Only load on our plugin pages
         if (strpos($hook, 'tbfw-transfer-brands') === false) {
+            return;
+        }
+
+        // Security check
+        if (!current_user_can('manage_woocommerce')) {
             return;
         }
         
@@ -478,10 +484,16 @@ class TBFW_Transfer_Brands_Admin {
      * Debug page
      *
      * @since 2.3.0
+     * @since 3.0.4 Added capability check
      */
     public function debug_page() {
+        // Security check - debug page contains sensitive information
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die(esc_html__('You do not have permission to access this page.', 'transfer-brands-for-woocommerce'));
+        }
+
         global $wpdb;
-        
+
         // Get the current debug log
         $debug_log = get_option('tbfw_brands_debug_log', []);
         
@@ -646,10 +658,16 @@ class TBFW_Transfer_Brands_Admin {
      * Render the main admin page with progress bar and controls
      *
      * @since 2.3.0
+     * @since 3.0.4 Added capability check
      */
     public function admin_page() {
+        // Security check
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die(esc_html__('You do not have permission to access this page.', 'transfer-brands-for-woocommerce'));
+        }
+
         // Avoid global cache flush here to prevent heavy performance impact
-        
+
         // Get current tab
         $active_tab = $this->get_active_tab();
         ?>
@@ -683,7 +701,7 @@ class TBFW_Transfer_Brands_Admin {
         $deleted_backup = get_option('tbfw_deleted_brands_backup', false);
 
         // Count products in deletion backup (for more accurate information)
-        $deleted_products_count = $deleted_backup ? count($deleted_backup) : 0;
+        $deleted_products_count = is_array($deleted_backup) ? count($deleted_backup) : 0;
 
         // Check WooCommerce Brands status
         $brands_status = $this->core->get_utils()->check_woocommerce_brands_status();
@@ -881,38 +899,52 @@ class TBFW_Transfer_Brands_Admin {
         
         <div class="card tbfw-card tbfw-mt-20">
             <h2><?php esc_html_e('Current Status', 'transfer-brands-for-woocommerce'); ?></h2>
-            
-            <?php 
-                // Get debug info for counts
-                $count_debug = get_option('tbfw_brands_count_debug', []); 
-                
-                // Get custom attribute details
-                global $wpdb;
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
-                $custom_attribute_count = $wpdb->get_var(
-                    $wpdb->prepare(
-                        "SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta}
-                        WHERE meta_key = '_product_attributes'
-                        AND meta_value LIKE %s
-                        AND meta_value LIKE %s
-                        AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')",
-                        '%' . $wpdb->esc_like($this->core->get_option('source_taxonomy')) . '%',
-                        '%"is_taxonomy";i:0;%'
-                    )
-                );
 
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
-                $taxonomy_attribute_count = $wpdb->get_var(
-                    $wpdb->prepare(
-                        "SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta} 
-                        WHERE meta_key = '_product_attributes' 
-                        AND meta_value LIKE %s
-                        AND meta_value LIKE %s
-                        AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')",
-                        '%' . $wpdb->esc_like($this->core->get_option('source_taxonomy')) . '%',
-                        '%"is_taxonomy";i:1;%'
-                    )
-                );
+            <?php
+                // Get debug info for counts
+                $count_debug = get_option('tbfw_brands_count_debug', []);
+
+                // Check if source is a brand plugin taxonomy (pwb-brand, yith_product_brand)
+                $is_brand_plugin = $this->core->get_utils()->is_brand_plugin_taxonomy($this->core->get_option('source_taxonomy'));
+
+                global $wpdb;
+
+                if ($is_brand_plugin) {
+                    // For brand plugin taxonomies, products use term relationships, not _product_attributes
+                    // The total count from count_products_with_source() is the correct count
+                    $custom_attribute_count = 0;
+                    $taxonomy_attribute_count = 0;
+                    $brand_plugin_product_count = $products_with_source;
+                } else {
+                    // For WooCommerce attributes, use the _product_attributes meta query
+                    $brand_plugin_product_count = 0;
+
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
+                    $custom_attribute_count = (int) ($wpdb->get_var(
+                        $wpdb->prepare(
+                            "SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta}
+                            WHERE meta_key = '_product_attributes'
+                            AND meta_value LIKE %s
+                            AND meta_value LIKE %s
+                            AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')",
+                            '%' . $wpdb->esc_like($this->core->get_option('source_taxonomy')) . '%',
+                            '%"is_taxonomy";i:0;%'
+                        )
+                    ) ?? 0);
+
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Migration tool requires direct query
+                    $taxonomy_attribute_count = (int) ($wpdb->get_var(
+                        $wpdb->prepare(
+                            "SELECT COUNT(DISTINCT post_id) FROM {$wpdb->postmeta}
+                            WHERE meta_key = '_product_attributes'
+                            AND meta_value LIKE %s
+                            AND meta_value LIKE %s
+                            AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish')",
+                            '%' . $wpdb->esc_like($this->core->get_option('source_taxonomy')) . '%',
+                            '%"is_taxonomy";i:1;%'
+                        )
+                    ) ?? 0);
+                }
             ?>
             
             
@@ -989,12 +1021,28 @@ class TBFW_Transfer_Brands_Admin {
 
                     <!-- Details (hidden by default) -->
                     <div id="tbfw-tb-count-details" class="tbfw-status-details tbfw-hidden">
+                        <?php if ($is_brand_plugin): ?>
+                        <ul class="tbfw-list-disc">
+                            <li><?php esc_html_e('Brand plugin products:', 'transfer-brands-for-woocommerce'); ?> <strong><?php echo esc_html($brand_plugin_product_count); ?></strong></li>
+                            <li><?php esc_html_e('Total:', 'transfer-brands-for-woocommerce'); ?> <strong><?php echo esc_html($products_with_source); ?></strong></li>
+                        </ul>
+                        <p class="tbfw-text-muted"><em>
+                            <?php
+                            printf(
+                                /* translators: %s: taxonomy name */
+                                esc_html__('Products are using the %s brand plugin taxonomy (not WooCommerce attributes).', 'transfer-brands-for-woocommerce'),
+                                '<code>' . esc_html($this->core->get_option('source_taxonomy')) . '</code>'
+                            );
+                            ?>
+                        </em></p>
+                        <?php else: ?>
                         <ul class="tbfw-list-disc">
                             <li><?php esc_html_e('Custom (non-taxonomy) brand:', 'transfer-brands-for-woocommerce'); ?> <strong><?php echo esc_html($custom_attribute_count); ?></strong></li>
                             <li><?php esc_html_e('Taxonomy brand:', 'transfer-brands-for-woocommerce'); ?> <strong><?php echo esc_html($taxonomy_attribute_count); ?></strong></li>
                             <li><?php esc_html_e('Total:', 'transfer-brands-for-woocommerce'); ?> <strong><?php echo esc_html($products_with_source); ?></strong></li>
                         </ul>
                         <p class="tbfw-text-muted"><em><?php esc_html_e('Note: Both taxonomy and custom attributes will be transferred.', 'transfer-brands-for-woocommerce'); ?></em></p>
+                        <?php endif; ?>
                         <?php if ($this->core->get_option('debug_mode')): ?>
                         <p class="tbfw-mt-10"><a href="<?php echo esc_url(admin_url('admin.php?page=tbfw-transfer-brands-debug')); ?>" class="button button-secondary"><?php esc_html_e('View Debug Info', 'transfer-brands-for-woocommerce'); ?></a></p>
                         <?php endif; ?>
@@ -1074,7 +1122,15 @@ class TBFW_Transfer_Brands_Admin {
                         <?php endif; ?>
                     </span>
                 </div>
-                
+
+                <div class="action-container">
+                    <button id="tbfw-tb-verify" class="button button-secondary action-button"
+                            data-tooltip="<?php esc_attr_e('Check what brands exist in destination and which products have them assigned', 'transfer-brands-for-woocommerce'); ?>">
+                        <?php esc_html_e('Verify Transfer', 'transfer-brands-for-woocommerce'); ?>
+                    </button>
+                    <span class="action-description"><?php esc_html_e('Check transfer results', 'transfer-brands-for-woocommerce'); ?></span>
+                </div>
+
                 <?php if ($products_with_source > 0): ?>
                 <div class="action-container">
                     <button id="tbfw-tb-delete-old" class="button button-warning action-button"

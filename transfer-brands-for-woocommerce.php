@@ -3,7 +3,7 @@
  * Plugin Name: Transfer Brands for WooCommerce
  * Plugin URI: https://pluginatlas.com/transfer-brands-for-woocommerce
  * Description: Official WooCommerce 9.6 brand migration tool. Transfer from Perfect Brands, YITH, or custom attributes with backup and image support.
- * Version: 3.0.0
+ * Version: 3.0.6
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
@@ -35,7 +35,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('TBFW_VERSION', '3.0.0');
+define('TBFW_VERSION', '3.0.6');
 define('TBFW_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('TBFW_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('TBFW_INCLUDES_DIR', TBFW_PLUGIN_DIR . 'includes/');
@@ -71,23 +71,6 @@ function tbfw_woocommerce_missing_notice() {
 }
 
 /**
- * Auto-load classes
- *
- * @since 2.3.0
- * @param string $class_name Class name to load
- */
-function tbfw_autoloader($class_name) {
-    if (strpos($class_name, 'TBFW_Transfer_Brands_') !== false) {
-        $class_file = str_replace('TBFW_Transfer_Brands_', '', $class_name);
-        $class_file = 'class-' . strtolower($class_file) . '.php';
-        
-        if (file_exists(TBFW_INCLUDES_DIR . $class_file)) {
-            require_once TBFW_INCLUDES_DIR . $class_file;
-        }
-    }
-}
-spl_autoload_register('tbfw_autoloader');
-/**
  * Initialize the plugin
  *
  * @since 2.3.0
@@ -98,7 +81,7 @@ function tbfw_init() {
         add_action('admin_notices', 'tbfw_woocommerce_missing_notice');
         return;
     }
-    
+
     // Include core files
     require_once TBFW_INCLUDES_DIR . 'class-core.php';
     require_once TBFW_INCLUDES_DIR . 'class-admin.php';
@@ -106,11 +89,52 @@ function tbfw_init() {
     require_once TBFW_INCLUDES_DIR . 'class-backup.php';
     require_once TBFW_INCLUDES_DIR . 'class-ajax.php';
     require_once TBFW_INCLUDES_DIR . 'class-utils.php';
-    
+
     // Initialize the plugin
     TBFW_Transfer_Brands_Core::get_instance();
+
+    // Smart source detection on first admin load (deferred from activation)
+    add_action('admin_init', 'tbfw_smart_source_detection');
 }
 add_action('plugins_loaded', 'tbfw_init');
+
+/**
+ * Smart source detection - runs on first admin load after activation
+ * Detects installed brand plugins and updates source taxonomy setting
+ *
+ * @since 3.0.6
+ */
+function tbfw_smart_source_detection() {
+    // Only run if we need smart detection
+    if (!get_transient('tbfw_needs_smart_detection')) {
+        return;
+    }
+
+    // Delete the transient first to prevent repeat runs
+    delete_transient('tbfw_needs_smart_detection');
+
+    $options = get_option('tbfw_transfer_brands_options', []);
+
+    // Only detect if still using default pa_brand
+    if (isset($options['source_taxonomy']) && $options['source_taxonomy'] === 'pa_brand') {
+        $smart_source = 'pa_brand';
+
+        // Check for Perfect Brands (most common)
+        if (taxonomy_exists('pwb-brand')) {
+            $smart_source = 'pwb-brand';
+        }
+        // Check for YITH Brands
+        elseif (taxonomy_exists('yith_product_brand')) {
+            $smart_source = 'yith_product_brand';
+        }
+
+        // Update if we found a better source
+        if ($smart_source !== 'pa_brand') {
+            $options['source_taxonomy'] = $smart_source;
+            update_option('tbfw_transfer_brands_options', $options);
+        }
+    }
+}
 
 /**
  * Plugin activation
@@ -133,27 +157,18 @@ function tbfw_activate() {
         }
     }
     
-    // Add default options with smart source detection
+    // Add default options - defer smart source detection to admin_init when taxonomies are registered
     if (!get_option('tbfw_transfer_brands_options')) {
-        // Smart default: detect installed brand plugins
-        $smart_source = 'pa_brand'; // Fallback default
-
-        // Check for Perfect Brands (most common)
-        if (taxonomy_exists('pwb-brand')) {
-            $smart_source = 'pwb-brand';
-        }
-        // Check for YITH Brands
-        elseif (taxonomy_exists('yith_product_brand')) {
-            $smart_source = 'yith_product_brand';
-        }
-
+        // Set default with pa_brand, smart detection will update on first admin load
         add_option('tbfw_transfer_brands_options', [
-            'source_taxonomy' => $smart_source,
+            'source_taxonomy' => 'pa_brand',
             'destination_taxonomy' => 'product_brand',
             'batch_size' => 10,
             'backup_enabled' => true,
             'debug_mode' => false
         ]);
+        // Set transient to trigger smart detection on first admin load
+        set_transient('tbfw_needs_smart_detection', true, DAY_IN_SECONDS);
     }
 
     // Ensure debug-related options exist and are not autoloaded to avoid slow autoload queries

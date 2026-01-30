@@ -3,7 +3,7 @@ Contributors: malakontask
 Tags: woocommerce, brands, migration, woocommerce brands, brand migration
 Requires at least: 6.0
 Tested up to: 6.9
-Stable tag: 3.0.0
+Stable tag: 3.0.6
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -129,6 +129,68 @@ Your original data remains untouched until you explicitly choose to delete it. T
 5. Debug and troubleshooting tools
 
 == Changelog ==
+
+= 3.0.6 =
+* **Security**: Fixed XSS vulnerabilities in error message display - now properly escapes all dynamic content
+* **Fixed**: Critical - Removed dead/shadowed runStep function that caused code confusion
+* **Fixed**: Critical - Added tbfwTbe object existence check to prevent JavaScript crashes
+* **Fixed**: Critical - Backup creation now properly verified before proceeding with transfer
+* **Fixed**: Delete initialization now validates server response before starting operation
+* **Fixed**: Smart brand plugin detection now runs on admin_init instead of activation (fixes timing issue)
+* **Removed**: Unused autoloader code that was never invoked
+* **Improved**: Better error handling and user feedback throughout
+
+= 3.0.5 =
+* **Security**: Fixed XSS vulnerability in JavaScript log display - now escapes all log messages
+* **Fixed**: Race condition in admin UI - added transfer-in-progress flag to prevent concurrent operations
+* **Fixed**: Missing error handler in delete initialization - flag now properly resets on AJAX failure
+* **Fixed**: Missing wp_reset_postdata() after WP_Query in get_taxonomy_brand_products()
+* **Fixed**: Return type consistency in count_source_terms() and count_destination_terms()
+* **Fixed**: Null safety in count_products_with_source() database query
+* **Improved**: Integer parsing for restored products count in restore operation
+
+= 3.0.4 =
+* **Security**: Fixed XSS vulnerability in debug error messages - now properly escaped with esc_html()
+* **Security**: Added capability checks to admin page methods (admin_page, debug_page, enqueue_admin_scripts)
+* **Security**: Added capability check to ajax_dismiss_review_notice handler
+* **Fixed**: Unchecked wc_get_product() call that could cause fatal error on invalid products
+* **Fixed**: Database error handling in delete old brands - now properly checks $wpdb->last_error
+* **Fixed**: Unchecked database query results in admin page - now cast to int with null coalescing
+* **Fixed**: Array type assumption with deleted_backup - now uses is_array() check (PHP 8+ compatibility)
+* **Fixed**: wp_get_object_terms() validation in backup - prevents WP_Error from corrupting backup data
+* **Improved**: Better error messages for database failures during deletion operations
+
+= 3.0.3 =
+* **Fixed**: Added taxonomy validation before transfer - prevents cryptic errors when taxonomies don't exist
+* **Fixed**: Race condition in batch processing - added transient-based locking to prevent concurrent transfers
+* **Fixed**: Temporary tracking options now properly cleaned up after transfer completion
+* **Fixed**: rollback_deleted_brands now has proper error handling for wp_insert_term and wp_set_object_terms
+* **Fixed**: Backup preserved when rollback_deleted_brands has errors - prevents data loss
+* **Fixed**: Added capability check to cleanup_backups - prevents unauthorized access
+* **Added**: Lock mechanism prevents duplicate batch processing from concurrent AJAX requests
+* **Added**: Detailed error tracking in rollback operations
+* **Improved**: Rollback operations now report partial success with preserved backup for retry
+
+= 3.0.2 =
+* **Fixed**: Critical memory issue - terms batch processing now uses proper pagination instead of loading all terms on every batch
+* **Fixed**: Silent transfer failures - wp_set_object_terms() now has comprehensive error checking
+* **Fixed**: Products incorrectly marked as processed even when transfer failed
+* **Fixed**: Rollback could delete backup data before verifying rollback was successful
+* **Added**: Failed products tracking for diagnostics (stored separately for troubleshooting)
+* **Added**: Detailed rollback reporting showing products restored and terms deleted
+* **Improved**: Better error handling throughout the transfer process
+* **Improved**: Rollback now only clears backup data when no errors occur
+
+= 3.0.1 =
+* **Fixed**: Products to Transfer count breakdown now correctly shows counts for brand plugin taxonomies (PWB, YITH)
+* **Fixed**: "Custom: 0, Taxonomy: 0, Total: X" display issue when using brand plugins - now shows "Brand plugin products: X"
+* **Fixed**: Brands appearing empty after transfer - added comprehensive cache clearing on completion
+* **Added**: "Verify Transfer" button to check what was actually transferred and diagnose issues
+* **Added**: Products with multiple brands are now listed in both "Analyze Brands" and "Preview Transfer" results
+* **Added**: Expandable table showing affected products with edit links for easy fixing
+* **Added**: Clear explanation message when products use brand plugin taxonomy instead of WooCommerce attributes
+* **Added**: Automatic cache clearing after transfer (term cache, product transients, rewrite rules)
+* **Improved**: Better diagnostic information for brand plugin migrations
 
 = 3.0.0 =
 * **Major UX Enhancement**: Smart detection banner automatically detects installed brand plugins
@@ -276,6 +338,24 @@ Your original data remains untouched until you explicitly choose to delete it. T
 * Initial release
 
 == Upgrade Notice ==
+
+= 3.0.6 =
+**Critical security and reliability update**: Fixes XSS vulnerabilities in error displays, removes dead code, adds proper backup verification before transfers, and fixes smart brand detection timing. Strongly recommended for all users.
+
+= 3.0.5 =
+**Security and reliability update**: Fixes XSS vulnerability in JavaScript logs, adds race condition protection to prevent UI conflicts during concurrent clicks, and improves code robustness with proper type handling. Recommended for all users.
+
+= 3.0.4 =
+**Security and stability update**: Fixes XSS vulnerability in debug messages, adds missing capability checks, prevents fatal errors from invalid products, improves database error handling, and ensures PHP 8+ compatibility. Recommended for all users.
+
+= 3.0.3 =
+**Security and reliability fixes**: Adds race condition protection, taxonomy validation, proper error handling in rollback operations, and capability checks. Prevents data corruption from concurrent requests and data loss during failed rollbacks.
+
+= 3.0.2 =
+**Critical reliability fixes**: Resolves memory issues with large stores (1000+ brands), adds proper error handling to prevent silent transfer failures, and ensures rollback only clears backup data after successful rollback. Highly recommended for all users.
+
+= 3.0.1 =
+**Important fixes for brand plugin migrations**: Fixes confusing count display when using PWB/YITH, adds "Verify Transfer" button to diagnose empty brands issue, and adds automatic cache clearing after transfer completion.
 
 = 3.0.0 =
 Major UX update! Smart brand plugin detection, one-click source switching, improved accessibility, and critical fix for Delete Old Brands with brand plugins.

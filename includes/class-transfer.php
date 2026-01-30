@@ -26,13 +26,63 @@ class TBFW_Transfer_Brands_Transfer {
     
     /**
      * Process a batch of terms to transfer
-     * 
+     *
      * @param int $offset Current offset
      * @return array Result data
      */
     public function process_terms_batch($offset = 0) {
-        $terms = get_terms(['taxonomy' => $this->core->get_option('source_taxonomy'), 'hide_empty' => false]);
-        
+        $source_taxonomy = $this->core->get_option('source_taxonomy');
+        $destination_taxonomy = $this->core->get_option('destination_taxonomy');
+
+        // Validate both taxonomies exist before processing
+        if (!taxonomy_exists($source_taxonomy)) {
+            $this->core->add_debug("Source taxonomy does not exist", [
+                'taxonomy' => $source_taxonomy
+            ]);
+            return [
+                'success' => false,
+                'message' => 'Error: Source taxonomy "' . esc_html($source_taxonomy) . '" does not exist. Please check your settings.'
+            ];
+        }
+
+        if (!taxonomy_exists($destination_taxonomy)) {
+            $this->core->add_debug("Destination taxonomy does not exist", [
+                'taxonomy' => $destination_taxonomy
+            ]);
+            return [
+                'success' => false,
+                'message' => 'Error: Destination taxonomy "' . esc_html($destination_taxonomy) . '" does not exist. Please enable WooCommerce Brands.'
+            ];
+        }
+
+        // Get total count first (cached after first call)
+        $total = wp_count_terms([
+            'taxonomy' => $source_taxonomy,
+            'hide_empty' => false
+        ]);
+
+        if (is_wp_error($total)) {
+            $this->core->add_debug("Error counting terms", [
+                'error' => $total->get_error_message()
+            ]);
+            return [
+                'success' => false,
+                'message' => 'Error counting terms: ' . $total->get_error_message()
+            ];
+        }
+
+        $total = (int) $total;
+
+        // Get only ONE term at the current offset (memory efficient)
+        $terms = get_terms([
+            'taxonomy' => $source_taxonomy,
+            'hide_empty' => false,
+            'number' => 1,
+            'offset' => $offset,
+            'orderby' => 'term_id',
+            'order' => 'ASC'
+        ]);
+
         if (is_wp_error($terms)) {
             $this->core->add_debug("Error getting terms", [
                 'error' => $terms->get_error_message()
@@ -42,11 +92,9 @@ class TBFW_Transfer_Brands_Transfer {
                 'message' => 'Error getting terms: ' . $terms->get_error_message()
             ];
         }
-        
-        $total = count($terms);
-        
-        if (isset($terms[$offset])) {
-            $term = $terms[$offset];
+
+        if (!empty($terms)) {
+            $term = $terms[0];
             $log_message = '';
             
             // Create or get new term
@@ -126,8 +174,32 @@ class TBFW_Transfer_Brands_Transfer {
     public function process_products_batch() {
         global $wpdb;
 
+        // Acquire lock to prevent race conditions from concurrent requests
+        $lock_key = 'tbfw_transfer_lock';
+        $lock_timeout = 300; // 5 minutes
+
+        if (get_transient($lock_key)) {
+            return [
+                'success' => false,
+                'message' => 'Another transfer batch is in progress. Please wait a moment and try again.'
+            ];
+        }
+
+        // Set lock before processing
+        set_transient($lock_key, wp_generate_uuid4(), $lock_timeout);
+
         $source_taxonomy = $this->core->get_option('source_taxonomy');
+        $destination_taxonomy = $this->core->get_option('destination_taxonomy');
         $is_brand_plugin = $this->core->get_utils()->is_brand_plugin_taxonomy($source_taxonomy);
+
+        // Validate taxonomies exist
+        if (!taxonomy_exists($source_taxonomy) || !taxonomy_exists($destination_taxonomy)) {
+            delete_transient($lock_key);
+            return [
+                'success' => false,
+                'message' => 'Error: Required taxonomies no longer exist. Please check your settings.'
+            ];
+        }
 
         // Get products that have already been processed
         $processed_products = get_option('tbfw_brands_processed_ids', []);
@@ -190,16 +262,28 @@ class TBFW_Transfer_Brands_Transfer {
             // Mark transfer as completed for review notice
             update_option('tbfw_transfer_completed', true, false);
 
+            // Clear all caches to ensure brands appear correctly
+            $this->clear_transfer_caches();
+
+            // Cleanup temporary tracking options
+            delete_option('tbfw_brands_processed_ids');
+            delete_option('tbfw_transfer_failed_products');
+
+            // Release the lock
+            delete_transient($lock_key);
+
             return [
                 'success' => true,
                 'step' => 'done',
                 'percent' => 100,
                 'message' => 'Transfer completed successfully!',
-                'log' => 'All products updated. Transfer process complete.'
+                'log' => 'All products updated. Transfer process complete. Cleaned up temporary data.'
             ];
         }
         
         $newly_processed = [];
+        $successfully_transferred = [];
+        $failed_products = [];
         $processed_count = 0;
         $custom_processed = 0;
         $brand_plugin_processed = 0;
@@ -207,10 +291,13 @@ class TBFW_Transfer_Brands_Transfer {
 
         foreach ($product_ids as $product_id) {
             $product = wc_get_product($product_id);
-            if (!$product) continue;
+            if (!$product) {
+                $failed_products[] = $product_id;
+                continue;
+            }
 
-            $newly_processed[] = $product_id;
             $processed_count++;
+            $transfer_success = false;
 
             // Handle brand plugin taxonomies differently
             if ($is_brand_plugin) {
@@ -232,17 +319,33 @@ class TBFW_Transfer_Brands_Transfer {
                         // Store previous assignments for potential rollback
                         $this->core->get_backup()->backup_product_terms($product_id);
 
-                        // Assign new terms
-                        wp_set_object_terms($product_id, $new_brand_ids, $this->core->get_option('destination_taxonomy'));
-                        $brand_plugin_processed++;
+                        // Assign new terms and check for errors
+                        $result = wp_set_object_terms($product_id, $new_brand_ids, $this->core->get_option('destination_taxonomy'));
 
-                        $this->core->add_debug("Brand plugin product processed", [
-                            'product_id' => $product_id,
-                            'source_taxonomy' => $source_taxonomy,
-                            'source_terms' => wp_list_pluck($source_terms, 'name'),
-                            'new_term_ids' => $new_brand_ids
-                        ]);
+                        if (is_wp_error($result)) {
+                            $failed_products[] = $product_id;
+                            $this->core->add_debug("Error assigning brand terms", [
+                                'product_id' => $product_id,
+                                'error' => $result->get_error_message()
+                            ]);
+                        } else {
+                            $transfer_success = true;
+                            $brand_plugin_processed++;
+
+                            $this->core->add_debug("Brand plugin product processed", [
+                                'product_id' => $product_id,
+                                'source_taxonomy' => $source_taxonomy,
+                                'source_terms' => wp_list_pluck($source_terms, 'name'),
+                                'new_term_ids' => $new_brand_ids
+                            ]);
+                        }
+                    } else {
+                        // No matching terms found - still mark as processed to avoid infinite loop
+                        $transfer_success = true;
                     }
+                } else {
+                    // No source terms - mark as processed
+                    $transfer_success = true;
                 }
             } else {
                 // Original logic for WooCommerce attributes
@@ -275,8 +378,20 @@ class TBFW_Transfer_Brands_Transfer {
                             // Store previous assignments for potential rollback
                             $this->core->get_backup()->backup_product_terms($product_id);
 
-                            // Assign new terms
-                            wp_set_object_terms($product_id, $new_brand_ids, $this->core->get_option('destination_taxonomy'));
+                            // Assign new terms and check for errors
+                            $result = wp_set_object_terms($product_id, $new_brand_ids, $this->core->get_option('destination_taxonomy'));
+
+                            if (is_wp_error($result)) {
+                                $failed_products[] = $product_id;
+                                $this->core->add_debug("Error assigning taxonomy terms", [
+                                    'product_id' => $product_id,
+                                    'error' => $result->get_error_message()
+                                ]);
+                            } else {
+                                $transfer_success = true;
+                            }
+                        } else {
+                            $transfer_success = true;
                         }
                     } else {
                         // This is a custom attribute, not a taxonomy
@@ -298,16 +413,27 @@ class TBFW_Transfer_Brands_Transfer {
                                     // Store previous assignments for potential rollback
                                     $this->core->get_backup()->backup_product_terms($product_id);
 
-                                    // Assign new term
-                                    wp_set_object_terms($product_id, [(int)$new_term->term_id], $this->core->get_option('destination_taxonomy'));
+                                    // Assign new term and check for errors
+                                    $result = wp_set_object_terms($product_id, [(int)$new_term->term_id], $this->core->get_option('destination_taxonomy'));
 
-                                    $this->core->add_debug("Custom attribute processed using term ID", [
-                                        'product_id' => $product_id,
-                                        'brand_value' => $brand_value,
-                                        'term_id' => $term->term_id,
-                                        'term_name' => $term->name,
-                                        'new_term_id' => $new_term->term_id
-                                    ]);
+                                    if (is_wp_error($result)) {
+                                        $failed_products[] = $product_id;
+                                        $this->core->add_debug("Error assigning custom term by ID", [
+                                            'product_id' => $product_id,
+                                            'error' => $result->get_error_message()
+                                        ]);
+                                    } else {
+                                        $transfer_success = true;
+                                        $this->core->add_debug("Custom attribute processed using term ID", [
+                                            'product_id' => $product_id,
+                                            'brand_value' => $brand_value,
+                                            'term_id' => $term->term_id,
+                                            'term_name' => $term->name,
+                                            'new_term_id' => $new_term->term_id
+                                        ]);
+                                    }
+                                } else {
+                                    $transfer_success = true; // No matching term, but processed
                                 }
                             } else {
                                 // If we couldn't find by ID, treat it as a name or slug
@@ -315,52 +441,90 @@ class TBFW_Transfer_Brands_Transfer {
 
                                 if (!$new_term) {
                                     // Try creating the term
-                                    $result = wp_insert_term($brand_value, $this->core->get_option('destination_taxonomy'));
-                                    if (!is_wp_error($result)) {
-                                        $new_term_id = $result['term_id'];
+                                    $insert_result = wp_insert_term($brand_value, $this->core->get_option('destination_taxonomy'));
+                                    if (!is_wp_error($insert_result)) {
+                                        $new_term_id = $insert_result['term_id'];
 
                                         // Store previous assignments for potential rollback
                                         $this->core->get_backup()->backup_product_terms($product_id);
 
-                                        // Assign new term
-                                        wp_set_object_terms($product_id, [$new_term_id], $this->core->get_option('destination_taxonomy'));
+                                        // Assign new term and check for errors
+                                        $result = wp_set_object_terms($product_id, [$new_term_id], $this->core->get_option('destination_taxonomy'));
 
-                                        $this->core->add_debug("Custom attribute processed by creating new term", [
-                                            'product_id' => $product_id,
-                                            'brand_value' => $brand_value,
-                                            'new_term_id' => $new_term_id
-                                        ]);
+                                        if (is_wp_error($result)) {
+                                            $failed_products[] = $product_id;
+                                            $this->core->add_debug("Error assigning newly created term", [
+                                                'product_id' => $product_id,
+                                                'error' => $result->get_error_message()
+                                            ]);
+                                        } else {
+                                            $transfer_success = true;
+                                            $this->core->add_debug("Custom attribute processed by creating new term", [
+                                                'product_id' => $product_id,
+                                                'brand_value' => $brand_value,
+                                                'new_term_id' => $new_term_id
+                                            ]);
+                                        }
                                     } else {
+                                        $failed_products[] = $product_id;
                                         $this->core->add_debug("Error creating term from custom attribute", [
                                             'product_id' => $product_id,
                                             'brand_value' => $brand_value,
-                                            'error' => $result->get_error_message()
+                                            'error' => $insert_result->get_error_message()
                                         ]);
                                     }
                                 } else {
                                     // Store previous assignments for potential rollback
                                     $this->core->get_backup()->backup_product_terms($product_id);
 
-                                    // Assign existing term
-                                    wp_set_object_terms($product_id, [(int)$new_term->term_id], $this->core->get_option('destination_taxonomy'));
+                                    // Assign existing term and check for errors
+                                    $result = wp_set_object_terms($product_id, [(int)$new_term->term_id], $this->core->get_option('destination_taxonomy'));
 
-                                    $this->core->add_debug("Custom attribute processed using existing term", [
-                                        'product_id' => $product_id,
-                                        'brand_value' => $brand_value,
-                                        'new_term_id' => $new_term->term_id,
-                                        'new_term_name' => $new_term->name
-                                    ]);
+                                    if (is_wp_error($result)) {
+                                        $failed_products[] = $product_id;
+                                        $this->core->add_debug("Error assigning existing term", [
+                                            'product_id' => $product_id,
+                                            'error' => $result->get_error_message()
+                                        ]);
+                                    } else {
+                                        $transfer_success = true;
+                                        $this->core->add_debug("Custom attribute processed using existing term", [
+                                            'product_id' => $product_id,
+                                            'brand_value' => $brand_value,
+                                            'new_term_id' => $new_term->term_id,
+                                            'new_term_name' => $new_term->name
+                                        ]);
+                                    }
                                 }
                             }
+                        } else {
+                            $transfer_success = true; // No brand value to process
                         }
                     }
+                } else {
+                    $transfer_success = true; // No matching attribute
                 }
             }
+
+            // Only add to successfully processed if transfer succeeded
+            if ($transfer_success) {
+                $successfully_transferred[] = $product_id;
+            }
+
+            // Always add to newly_processed to track attempted products (prevents infinite loop)
+            $newly_processed[] = $product_id;
         }
 
-        // Update the list of processed products
+        // Update the list of processed products (includes all attempted, successful or not)
         $processed_products = array_merge($processed_products, $newly_processed);
         update_option('tbfw_brands_processed_ids', $processed_products);
+
+        // Track failed products separately for diagnostics
+        if (!empty($failed_products)) {
+            $existing_failed = get_option('tbfw_transfer_failed_products', []);
+            $existing_failed = array_merge($existing_failed, $failed_products);
+            update_option('tbfw_transfer_failed_products', array_unique($existing_failed), false);
+        }
 
         // Calculate overall progress
         $processed_total = count($processed_products);
@@ -372,7 +536,10 @@ class TBFW_Transfer_Brands_Transfer {
         } else {
             $log_message = "Processed {$processed_count} products in this batch ({$custom_processed} with custom attributes). Total processed: {$processed_total} of {$total}";
         }
-        
+
+        // Release the lock after batch completes
+        delete_transient($lock_key);
+
         return [
             'success' => true,
             'step' => 'products',
@@ -762,5 +929,48 @@ class TBFW_Transfer_Brands_Transfer {
                 $taxonomy
             )
         );
+    }
+
+    /**
+     * Clear all caches after transfer completion
+     *
+     * This ensures that the transferred brands appear correctly in WooCommerce admin
+     * and on the frontend without requiring manual cache clearing.
+     *
+     * @since 3.0.1
+     */
+    private function clear_transfer_caches() {
+        $destination_taxonomy = $this->core->get_option('destination_taxonomy');
+
+        // Clear term cache for destination taxonomy
+        clean_taxonomy_cache($destination_taxonomy);
+
+        // Clear WooCommerce product transients
+        if (function_exists('wc_delete_product_transients')) {
+            wc_delete_product_transients();
+        }
+
+        // Clear term counts
+        delete_transient('wc_term_counts');
+
+        // Clear product counts
+        delete_transient('wc_product_count');
+
+        // Clear object term cache for all products
+        wp_cache_flush_group('terms');
+
+        // Flush rewrite rules to ensure brand URLs work
+        flush_rewrite_rules();
+
+        // Clear any WooCommerce specific caches
+        if (function_exists('wc_clear_product_transients_and_cache')) {
+            wc_clear_product_transients_and_cache();
+        }
+
+        // Log the cache clearing
+        $this->core->add_debug('Transfer caches cleared', [
+            'destination_taxonomy' => $destination_taxonomy,
+            'timestamp' => current_time('mysql')
+        ]);
     }
 }
