@@ -96,15 +96,36 @@ class TBFW_Transfer_Brands_Transfer {
         if (!empty($terms)) {
             $term = $terms[0];
             $log_message = '';
-            
-            // Create or get new term
+
+            // Skip terms with empty names (data integrity issue in source)
+            if (empty(trim($term->name))) {
+                $this->core->add_debug("Skipping term with empty name", [
+                    'term_id' => $term->term_id,
+                    'slug' => $term->slug
+                ]);
+
+                $offset++;
+                $percent = min(45, round(($offset / $total) * 40) + 5);
+
+                return [
+                    'success' => true,
+                    'step' => 'terms',
+                    'offset' => $offset,
+                    'total' => $total,
+                    'percent' => $percent,
+                    'message' => "Transferring terms: {$offset} of {$total}",
+                    'log' => 'Skipped term with empty name (ID: ' . $term->term_id . ')'
+                ];
+            }
+
+            // Create or get new term - PRESERVE ORIGINAL SLUG for SEO
             $new = term_exists($term->name, $this->core->get_option('destination_taxonomy'));
             if (!$new) {
                 $new = wp_insert_term($term->name, $this->core->get_option('destination_taxonomy'), [
-                    'slug' => sanitize_title($term->name),
+                    'slug' => $term->slug, // Preserve original slug for SEO/URL preservation
                     'description' => $term->description
                 ]);
-                $log_message = 'Created new term: ' . $term->name;
+                $log_message = 'Created new term: ' . $term->name . ' (slug: ' . $term->slug . ')';
             } else {
                 $log_message = 'Using existing term: ' . $term->name;
             }

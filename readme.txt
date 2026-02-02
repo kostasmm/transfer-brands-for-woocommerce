@@ -3,7 +3,7 @@ Contributors: malakontask
 Tags: woocommerce, brands, migration, woocommerce brands, brand migration
 Requires at least: 6.0
 Tested up to: 6.9
-Stable tag: 3.0.6
+Stable tag: 3.0.7
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -129,6 +129,11 @@ Your original data remains untouched until you explicitly choose to delete it. T
 5. Debug and troubleshooting tools
 
 == Changelog ==
+
+= 3.0.7 =
+* **Fixed**: Empty term name error - now skips brands with empty names instead of failing the transfer
+* **Fixed**: SEO URL preservation - brand slugs are now preserved during transfer to maintain existing URLs
+* **Improved**: Better logging shows preserved slugs during term creation
 
 = 3.0.6 =
 * **Security**: Fixed XSS vulnerabilities in error message display - now properly escapes all dynamic content
@@ -338,6 +343,9 @@ Your original data remains untouched until you explicitly choose to delete it. T
 * Initial release
 
 == Upgrade Notice ==
+
+= 3.0.7 =
+**SEO-critical fix**: Brand slugs are now preserved during transfer, maintaining your existing URLs and search rankings. Also fixes error when source brands have empty names. Recommended for all users migrating from Perfect Brands or other brand plugins.
 
 = 3.0.6 =
 **Critical security and reliability update**: Fixes XSS vulnerabilities in error displays, removes dead code, adds proper backup verification before transfers, and fixes smart brand detection timing. Strongly recommended for all users.
