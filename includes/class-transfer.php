@@ -73,6 +73,10 @@ class TBFW_Transfer_Brands_Transfer {
 
         $total = (int) $total;
 
+        // Clear term cache to prevent stale results between AJAX batch calls
+        // This is critical for sites using persistent object cache (Redis, Memcached)
+        clean_taxonomy_cache($source_taxonomy);
+
         // Get only ONE term at the current offset (memory efficient)
         $terms = get_terms([
             'taxonomy' => $source_taxonomy,
@@ -97,11 +101,13 @@ class TBFW_Transfer_Brands_Transfer {
             $term = $terms[0];
             $log_message = '';
 
-            // Skip terms with empty names (data integrity issue in source)
+            // Validate term has a non-empty name before processing
+            // Source taxonomies can contain corrupted/empty terms from plugin bugs or DB issues
             if (empty(trim($term->name))) {
-                $this->core->add_debug("Skipping term with empty name", [
-                    'term_id' => $term->term_id,
-                    'slug' => $term->slug
+                $this->core->add_debug("Skipped term with empty name", [
+                    'term_id' => $term->term_id ?? '',
+                    'term_slug' => $term->slug ?? '',
+                    'offset' => $offset
                 ]);
 
                 $offset++;
@@ -114,7 +120,7 @@ class TBFW_Transfer_Brands_Transfer {
                     'total' => $total,
                     'percent' => $percent,
                     'message' => "Transferring terms: {$offset} of {$total}",
-                    'log' => 'Skipped term with empty name (ID: ' . $term->term_id . ')'
+                    'log' => 'Skipped term with empty name (ID: ' . ($term->term_id ?? '') . ')'
                 ];
             }
 
@@ -129,20 +135,32 @@ class TBFW_Transfer_Brands_Transfer {
             } else {
                 $log_message = 'Using existing term: ' . $term->name;
             }
-            
+
+            // If term creation failed, skip this term and continue with the next one
+            // instead of halting the entire transfer process
             if (is_wp_error($new)) {
-                $this->core->add_debug("Error creating term", [
+                $this->core->add_debug("Error creating term, skipping", [
                     'term' => $term->name,
+                    'term_id' => $term->term_id,
                     'error' => $new->get_error_message()
                 ]);
+
+                $offset++;
+                $percent = min(45, round(($offset / $total) * 40) + 5);
+
                 return [
-                    'success' => false,
-                    'message' => 'Error creating term: ' . $new->get_error_message()
+                    'success' => true,
+                    'step' => 'terms',
+                    'offset' => $offset,
+                    'total' => $total,
+                    'percent' => $percent,
+                    'message' => "Transferring terms: {$offset} of {$total}",
+                    'log' => 'Skipped term "' . esc_html($term->name) . '": ' . esc_html($new->get_error_message())
                 ];
             }
-            
+
             $new_id = is_array($new) ? $new['term_id'] : $new;
-            
+
             // Transfer image if exists - support multiple theme meta keys
             $image_id = $this->find_brand_image($term->term_id);
             if ($image_id) {
@@ -150,10 +168,10 @@ class TBFW_Transfer_Brands_Transfer {
                 $this->set_brand_image_for_all_themes($new_id, $image_id);
                 $log_message .= ' (with image)';
             }
-            
+
             // Store mapping for potential rollback
             $this->core->get_backup()->add_term_mapping($term->term_id, $new_id);
-            
+
             // Add debug info
             $this->core->add_debug("Term processed", [
                 'term_id' => $term->term_id,
@@ -164,7 +182,7 @@ class TBFW_Transfer_Brands_Transfer {
 
             $offset++;
             $percent = min(45, round(($offset / $total) * 40) + 5);
-            
+
             return [
                 'success' => true,
                 'step' => 'terms',

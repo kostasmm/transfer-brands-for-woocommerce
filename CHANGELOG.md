@@ -5,6 +5,17 @@ All notable changes to Transfer Brands for WooCommerce will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.7] - 2026-02-08
+
+### Fixed
+- **CRITICAL**: PWB transfer now correctly transfers ALL brands instead of only the first one
+- Terms with empty or corrupted names are now skipped gracefully instead of halting the entire transfer process
+- Term creation errors (wp_insert_term failures) no longer stop the transfer - failed terms are skipped with a log entry
+
+### Improved
+- Added `clean_taxonomy_cache()` before `get_terms()` in batch processing to prevent stale cache results on sites using persistent object cache (Redis, Memcached)
+- Better debug logging for skipped terms including term_id, slug, and offset
+
 ## [3.0.0] - 2025-12-10
 
 ### Added

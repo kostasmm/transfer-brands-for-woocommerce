@@ -131,8 +131,11 @@ Your original data remains untouched until you explicitly choose to delete it. T
 == Changelog ==
 
 = 3.0.7 =
-* **Fixed**: Empty term name error - now skips brands with empty names instead of failing the transfer
+* **Fixed**: Critical - PWB transfer now correctly transfers ALL brands instead of only the first one
+* **Fixed**: Terms with empty/corrupted names are now skipped instead of halting the entire transfer
+* **Fixed**: Term creation errors no longer stop the transfer - failed terms are skipped with a log message
 * **Fixed**: SEO URL preservation - brand slugs are now preserved during transfer to maintain existing URLs
+* **Improved**: Added cache clearing between term batch AJAX calls to prevent stale results on sites with persistent object cache (Redis/Memcached)
 * **Improved**: Better logging shows preserved slugs during term creation
 
 = 3.0.6 =
@@ -345,7 +348,7 @@ Your original data remains untouched until you explicitly choose to delete it. T
 == Upgrade Notice ==
 
 = 3.0.7 =
-**SEO-critical fix**: Brand slugs are now preserved during transfer, maintaining your existing URLs and search rankings. Also fixes error when source brands have empty names. Recommended for all users migrating from Perfect Brands or other brand plugins.
+**Critical bugfix and SEO preservation**: Fixes issue where only the first brand transfers from PWB. Empty/corrupted terms no longer halt the transfer. Brand slugs are now preserved during transfer to maintain existing URLs and search rankings. Strongly recommended for all users migrating from PWB.
 
 = 3.0.6 =
 **Critical security and reliability update**: Fixes XSS vulnerabilities in error displays, removes dead code, adds proper backup verification before transfers, and fixes smart brand detection timing. Strongly recommended for all users.
