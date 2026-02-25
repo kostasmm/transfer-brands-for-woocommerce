@@ -5,6 +5,17 @@ All notable changes to Transfer Brands for WooCommerce will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.9] - 2026-02-25
+
+### Fixed
+- **CRITICAL**: Brand transfer now works correctly on sites with Redis/Memcached persistent object cache
+- Replaced `get_terms()` and `wp_count_terms()` with direct `$wpdb` queries in `process_terms_batch()` to bypass the `WP_Term_Query` cache layer (`term-queries` group) that `clean_taxonomy_cache()` does not invalidate
+- Added `wp_cache_delete('last_changed', 'terms')` before `term_exists()` and `wp_insert_term()` to prevent stale destination taxonomy lookups
+- Potential division by zero in progress percentage calculation when source term count is zero
+
+### Improved
+- Consistent use of local `$destination_taxonomy` variable instead of repeated `$this->core->get_option()` calls in term creation
+
 ## [3.0.8] - 2026-02-08
 
 ### Fixed

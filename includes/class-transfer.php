@@ -31,6 +31,8 @@ class TBFW_Transfer_Brands_Transfer {
      * @return array Result data
      */
     public function process_terms_batch($offset = 0) {
+        global $wpdb;
+
         $source_taxonomy = $this->core->get_option('source_taxonomy');
         $destination_taxonomy = $this->core->get_option('destination_taxonomy');
 
@@ -55,50 +57,30 @@ class TBFW_Transfer_Brands_Transfer {
             ];
         }
 
-        // Get total count first (cached after first call)
-        $total = wp_count_terms([
-            'taxonomy' => $source_taxonomy,
-            'hide_empty' => false
-        ]);
+        // Direct DB query for total count — bypasses persistent object cache (Redis, Memcached)
+        // This prevents stale counts that could affect progress tracking
+        $total = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s",
+            $source_taxonomy
+        ));
 
-        if (is_wp_error($total)) {
-            $this->core->add_debug("Error counting terms", [
-                'error' => $total->get_error_message()
-            ]);
-            return [
-                'success' => false,
-                'message' => 'Error counting terms: ' . $total->get_error_message()
-            ];
-        }
+        // Direct DB query for term fetch — bypasses persistent object cache entirely
+        // This is the critical fix: get_terms() uses WP_Term_Query which caches results
+        // in the 'term-queries' group. clean_taxonomy_cache() does NOT invalidate this
+        // cache group, causing stale/empty results on Redis/Memcached sites after the
+        // first batch processes and wp_insert_term() modifies cache timestamps.
+        $term = $wpdb->get_row($wpdb->prepare(
+            "SELECT t.term_id, t.name, t.slug, tt.description
+            FROM {$wpdb->terms} AS t
+            INNER JOIN {$wpdb->term_taxonomy} AS tt ON t.term_id = tt.term_id
+            WHERE tt.taxonomy = %s
+            ORDER BY t.term_id ASC
+            LIMIT 1 OFFSET %d",
+            $source_taxonomy,
+            $offset
+        ));
 
-        $total = (int) $total;
-
-        // Clear term cache to prevent stale results between AJAX batch calls
-        // This is critical for sites using persistent object cache (Redis, Memcached)
-        clean_taxonomy_cache($source_taxonomy);
-
-        // Get only ONE term at the current offset (memory efficient)
-        $terms = get_terms([
-            'taxonomy' => $source_taxonomy,
-            'hide_empty' => false,
-            'number' => 1,
-            'offset' => $offset,
-            'orderby' => 'term_id',
-            'order' => 'ASC'
-        ]);
-
-        if (is_wp_error($terms)) {
-            $this->core->add_debug("Error getting terms", [
-                'error' => $terms->get_error_message()
-            ]);
-            return [
-                'success' => false,
-                'message' => 'Error getting terms: ' . $terms->get_error_message()
-            ];
-        }
-
-        if (!empty($terms)) {
-            $term = $terms[0];
+        if ($term) {
             $log_message = '';
 
             // Validate term has a non-empty name before processing
@@ -111,7 +93,7 @@ class TBFW_Transfer_Brands_Transfer {
                 ]);
 
                 $offset++;
-                $percent = min(45, round(($offset / $total) * 40) + 5);
+                $percent = ($total > 0) ? min(45, round(($offset / $total) * 40) + 5) : 45;
 
                 return [
                     'success' => true,
@@ -124,10 +106,16 @@ class TBFW_Transfer_Brands_Transfer {
                 ];
             }
 
+            // Invalidate term query cache before destination taxonomy operations
+            // This ensures term_exists() and wp_insert_term() get fresh results
+            // and prevents stale lookups on persistent object cache sites
+            wp_cache_delete('last_changed', 'terms');
+            clean_taxonomy_cache($destination_taxonomy);
+
             // Create or get new term - PRESERVE ORIGINAL SLUG for SEO
-            $new = term_exists($term->name, $this->core->get_option('destination_taxonomy'));
+            $new = term_exists($term->name, $destination_taxonomy);
             if (!$new) {
-                $new = wp_insert_term($term->name, $this->core->get_option('destination_taxonomy'), [
+                $new = wp_insert_term($term->name, $destination_taxonomy, [
                     'slug' => $term->slug, // Preserve original slug for SEO/URL preservation
                     'description' => $term->description
                 ]);
@@ -146,7 +134,7 @@ class TBFW_Transfer_Brands_Transfer {
                 ]);
 
                 $offset++;
-                $percent = min(45, round(($offset / $total) * 40) + 5);
+                $percent = ($total > 0) ? min(45, round(($offset / $total) * 40) + 5) : 45;
 
                 return [
                     'success' => true,
@@ -181,7 +169,7 @@ class TBFW_Transfer_Brands_Transfer {
             ]);
 
             $offset++;
-            $percent = min(45, round(($offset / $total) * 40) + 5);
+            $percent = ($total > 0) ? min(45, round(($offset / $total) * 40) + 5) : 45;
 
             return [
                 'success' => true,

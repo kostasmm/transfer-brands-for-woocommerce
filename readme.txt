@@ -3,7 +3,7 @@ Contributors: malakontask
 Tags: woocommerce, brands, migration, woocommerce brands, brand migration
 Requires at least: 6.0
 Tested up to: 6.9
-Stable tag: 3.0.8
+Stable tag: 3.0.9
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -129,6 +129,13 @@ Your original data remains untouched until you explicitly choose to delete it. T
 5. Debug and troubleshooting tools
 
 == Changelog ==
+
+= 3.0.9 =
+* **Fixed**: Critical - Brand transfer now works correctly on sites with Redis/Memcached persistent object cache
+* **Fixed**: Replaced `get_terms()` and `wp_count_terms()` with direct database queries in term batch processing to bypass `WP_Term_Query` cache layer that `clean_taxonomy_cache()` does not invalidate
+* **Fixed**: Added `wp_cache_delete('last_changed', 'terms')` before destination taxonomy operations to prevent stale `term_exists()` lookups
+* **Fixed**: Potential division by zero in progress percentage when term count is zero
+* **Improved**: Consistent use of `$destination_taxonomy` variable in `wp_insert_term()` call
 
 = 3.0.8 =
 * **Fixed**: Critical - PWB transfer now correctly transfers ALL brands instead of only the first one
@@ -348,6 +355,9 @@ Your original data remains untouched until you explicitly choose to delete it. T
 * Initial release
 
 == Upgrade Notice ==
+
+= 3.0.9 =
+**Critical fix for Redis/Memcached sites**: Resolves the persistent issue where only the first brand transfers on sites using persistent object cache. The v3.0.8 fix (`clean_taxonomy_cache()`) was insufficient — it does not invalidate the `WP_Term_Query` cache group. This update bypasses the WordPress cache layer entirely with direct database queries. No need to disable Redis. Strongly recommended for all users.
 
 = 3.0.8 =
 **Critical bugfix**: Fixes issue where only the first brand transfers from PWB (Perfect WooCommerce Brands). Term creation errors no longer halt the entire transfer. Added cache clearing for persistent object cache compatibility. Strongly recommended for all users migrating from PWB.
